@@ -11,11 +11,14 @@
 #include <vector>
 
 #include "pageforge/heap_file.hpp"
+#include "pageforge/buffer_pool.hpp"
 #include "pageforge/page.hpp"
 
 namespace {
 
 using pageforge::HeapFile;
+using pageforge::BufferPool;
+using pageforge::BufferPoolExhausted;
 using pageforge::PageCorruption;
 using pageforge::PageFull;
 using pageforge::SlottedPage;
@@ -158,6 +161,83 @@ void heap_file_detects_truncation() {
   std::filesystem::remove(path);
 }
 
+void buffer_pool_caches_page_hits() {
+  const auto path = std::filesystem::temp_directory_path() / "pageforge-buffer-hit-test.db";
+  std::filesystem::remove(path);
+  auto heap = HeapFile::create(path);
+  auto disk_page = heap.allocate_page();
+  disk_page.insert(bytes("cached"));
+  heap.write_page(disk_page);
+  heap.sync();
+
+  BufferPool pool(heap, 2);
+  {
+    const auto guard = pool.fetch(0);
+    check(text(guard.page().read(0)) == "cached", "buffer miss should load the disk page");
+  }
+  {
+    const auto guard = pool.fetch(0);
+    check(text(guard.page().read(0)) == "cached", "cache hit should return the resident page");
+  }
+  const auto stats = pool.stats();
+  check(stats.misses == 1 && stats.hits == 1, "buffer metrics should distinguish hits and misses");
+  check(pool.resident(0) && pool.resident_pages() == 1, "loaded page should remain resident");
+  std::filesystem::remove(path);
+}
+
+void buffer_pool_writes_dirty_victims() {
+  const auto path = std::filesystem::temp_directory_path() / "pageforge-buffer-eviction-test.db";
+  std::filesystem::remove(path);
+  auto heap = HeapFile::create(path);
+  heap.allocate_page();
+  heap.allocate_page();
+  heap.sync();
+
+  BufferPool pool(heap, 1);
+  {
+    auto guard = pool.fetch(0);
+    guard.mutable_page().insert(bytes("dirty row"));
+  }
+  {
+    const auto guard = pool.fetch(1);
+    check(guard.page_id() == 1, "second page should replace the first frame");
+  }
+  const auto stats = pool.stats();
+  check(stats.evictions == 1 && stats.dirty_writes == 1, "dirty eviction should be measured and written");
+  check(text(heap.read_page(0).read(0)) == "dirty row", "dirty victim must reach the heap before eviction");
+  std::filesystem::remove(path);
+}
+
+void buffer_pool_respects_pins() {
+  const auto path = std::filesystem::temp_directory_path() / "pageforge-buffer-pin-test.db";
+  std::filesystem::remove(path);
+  auto heap = HeapFile::create(path);
+  heap.allocate_page();
+  heap.allocate_page();
+  BufferPool pool(heap, 1);
+
+  auto pinned = pool.fetch(0);
+  check_throws<BufferPoolExhausted>([&] { (void)pool.fetch(1); }, "all-pinned pool should reject another fetch");
+  pinned.release();
+  const auto replacement = pool.fetch(1);
+  check(replacement.page_id() == 1, "released frame should become evictable");
+  std::filesystem::remove(path);
+}
+
+void buffer_pool_flushes_allocated_pages() {
+  const auto path = std::filesystem::temp_directory_path() / "pageforge-buffer-allocate-test.db";
+  std::filesystem::remove(path);
+  auto heap = HeapFile::create(path);
+  BufferPool pool(heap, 2);
+  auto guard = pool.allocate();
+  check(guard.page_id() == 0, "buffer allocation should return the new heap page");
+  guard.mutable_page().insert(bytes("allocated through pool"));
+  pool.flush_all();
+  check(text(heap.read_page(0).read(0)) == "allocated through pool", "explicit flush should persist pinned pages");
+  check(pool.stats().dirty_writes == 1, "flush should update dirty-write metrics");
+  std::filesystem::remove(path);
+}
+
 }  // namespace
 
 int main() {
@@ -169,6 +249,10 @@ int main() {
       {"heap file corruption detection", heap_file_detects_page_corruption},
       {"heap header corruption detection", heap_file_detects_header_corruption},
       {"heap truncation detection", heap_file_detects_truncation},
+      {"buffer pool cache hits", buffer_pool_caches_page_hits},
+      {"buffer pool dirty eviction", buffer_pool_writes_dirty_victims},
+      {"buffer pool pin safety", buffer_pool_respects_pins},
+      {"buffer pool allocation and flush", buffer_pool_flushes_allocated_pages},
   };
   std::size_t passed = 0;
   for (const auto& [name, test] : tests) {

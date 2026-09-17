@@ -15,6 +15,7 @@ compaction, and a durable heap file.
 - Stable slot IDs across deletion, reuse, and compaction
 - Full-page and heap-header corruption checksums
 - Durable page allocation, reads, writes, flushing, and reopen
+- Clock-sweep buffer pool with RAII pin guards and dirty-page eviction
 - Bounds, overlap, truncation, format, and page-position validation
 - Warning-clean C++20 build on macOS and Linux CI
 
@@ -27,13 +28,14 @@ make check
 ```
 
 The test suite writes only temporary heap files and removes them afterward. See
-[docs/STORAGE_FORMAT.md](docs/STORAGE_FORMAT.md) for byte layouts, invariants,
-validation rules, and the current durability boundary.
+[docs/STORAGE_FORMAT.md](docs/STORAGE_FORMAT.md) for byte layouts and validation
+rules, and [docs/BUFFER_POOL.md](docs/BUFFER_POOL.md) for caching, pinning,
+eviction, writeback, and durability boundaries.
 
 ## Architecture roadmap
 
 - [x] Checksummed slotted pages and heap files
-- [ ] Clock-sweep buffer pool with dirty-page eviction
+- [x] Clock-sweep buffer pool with dirty-page eviction
 - [ ] B+ tree indexes and heap record IDs
 - [ ] Typed tuples and catalog metadata
 - [ ] SQL lexer, parser, and logical plans
