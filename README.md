@@ -4,9 +4,9 @@ PageForge is a relational database engine built from scratch in modern C++.
 Its goal is to make storage, indexing, query execution, and recovery mechanisms
 visible and testable rather than hiding them behind an existing database.
 
-The first milestone implements the physical storage foundation: portable
+The current milestone implements the physical storage foundation: portable
 checksummed pages, variable-length records, stable record identifiers, page
-compaction, and a durable heap file.
+compaction, a durable heap file, and a small buffer manager.
 
 ## Current capabilities
 
@@ -16,6 +16,7 @@ compaction, and a durable heap file.
 - Full-page and heap-header corruption checksums
 - Durable page allocation, reads, writes, flushing, and reopen
 - Clock-sweep buffer pool with RAII pin guards and dirty-page eviction
+- Multi-page record store with `(page_id, slot_id)` IDs, deletion, and scans
 - Bounds, overlap, truncation, format, and page-position validation
 - Warning-clean C++20 build on macOS and Linux CI
 
@@ -29,14 +30,15 @@ make check
 
 The test suite writes only temporary heap files and removes them afterward. See
 [docs/STORAGE_FORMAT.md](docs/STORAGE_FORMAT.md) for byte layouts and validation
-rules, and [docs/BUFFER_POOL.md](docs/BUFFER_POOL.md) for caching, pinning,
-eviction, writeback, and durability boundaries.
+rules, [docs/BUFFER_POOL.md](docs/BUFFER_POOL.md) for caching and writeback, and
+[docs/RECORD_STORE.md](docs/RECORD_STORE.md) for record-level behavior.
 
 ## Architecture roadmap
 
 - [x] Checksummed slotted pages and heap files
 - [x] Clock-sweep buffer pool with dirty-page eviction
-- [ ] B+ tree indexes and heap record IDs
+- [x] Heap record IDs, multi-page insertion, deletion, and scans
+- [ ] B+ tree indexes
 - [ ] Typed tuples and catalog metadata
 - [ ] SQL lexer, parser, and logical plans
 - [ ] Iterator-based scans, filters, joins, and aggregation

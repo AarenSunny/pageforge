@@ -58,6 +58,7 @@ class BufferPool {
   void flush_all();
 
   [[nodiscard]] std::size_t capacity() const noexcept { return frames_.size(); }
+  [[nodiscard]] PageId page_count() const noexcept { return heap_.page_count(); }
   [[nodiscard]] std::size_t resident_pages() const noexcept { return page_table_.size(); }
   [[nodiscard]] bool resident(PageId page_id) const { return page_table_.contains(page_id); }
   [[nodiscard]] BufferPoolStats stats() const noexcept { return stats_; }

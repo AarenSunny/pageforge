@@ -109,6 +109,10 @@ std::size_t SlottedPage::live_records() const {
   return count;
 }
 
+bool SlottedPage::contains(SlotId slot_id) const {
+  return slot_id < slot_count() && (read_slot(bytes_, slot_id).flags & kLive) != 0;
+}
+
 std::size_t SlottedPage::free_space() const {
   return read_u16(bytes_, kFreeEndOffset) - read_u16(bytes_, kFreeStartOffset);
 }

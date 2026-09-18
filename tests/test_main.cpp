@@ -13,6 +13,7 @@
 #include "pageforge/heap_file.hpp"
 #include "pageforge/buffer_pool.hpp"
 #include "pageforge/page.hpp"
+#include "pageforge/record_store.hpp"
 
 namespace {
 
@@ -21,6 +22,7 @@ using pageforge::BufferPool;
 using pageforge::BufferPoolExhausted;
 using pageforge::PageCorruption;
 using pageforge::PageFull;
+using pageforge::RecordStore;
 using pageforge::SlottedPage;
 
 std::vector<std::byte> bytes(std::string_view value) {
@@ -238,6 +240,80 @@ void buffer_pool_flushes_allocated_pages() {
   std::filesystem::remove(path);
 }
 
+void record_store_spans_pages_and_reopens() {
+  const auto path = std::filesystem::temp_directory_path() / "pageforge-record-store-test.db";
+  std::filesystem::remove(path);
+  pageforge::RecordId first{};
+  pageforge::RecordId second{};
+  {
+    auto heap = HeapFile::create(path);
+    BufferPool pool(heap, 1);
+    RecordStore records(pool);
+    first = records.insert(bytes(std::string(3500, 'a')));
+    second = records.insert(bytes(std::string(1000, 'b')));
+    check(first.page_id == 0 && second.page_id == 1, "records should span pages when one is full");
+    check(text(records.read(first)) == std::string(3500, 'a'), "evicted record should remain readable");
+    check(text(records.read(second)) == std::string(1000, 'b'), "second-page record should be readable");
+    const auto found = records.scan();
+    check(found.size() == 2 && found[0].id == first && found[1].id == second,
+          "scan should emit stable record ids in page and slot order");
+    pool.flush_all();
+  }
+  {
+    auto heap = HeapFile::open(path);
+    BufferPool pool(heap, 1);
+    RecordStore records(pool);
+    check(text(records.read(first)) == std::string(3500, 'a'), "first record should survive reopen");
+    check(text(records.read(second)) == std::string(1000, 'b'), "second record should survive reopen");
+    check(records.scan().size() == 2, "scan should survive reopen");
+  }
+  std::filesystem::remove(path);
+}
+
+void record_store_reuses_deleted_space() {
+  const auto path = std::filesystem::temp_directory_path() / "pageforge-record-reuse-test.db";
+  std::filesystem::remove(path);
+  {
+    auto heap = HeapFile::create(path);
+    BufferPool pool(heap, 1);
+    RecordStore records(pool);
+    const auto first = records.insert(bytes("first"));
+    const auto deleted = records.insert(bytes(std::string(1200, 'x')));
+    const auto last = records.insert(bytes("last"));
+    check(records.erase(deleted), "live record should be deleted");
+    check(!records.erase(deleted), "repeated deletion should return false");
+    check_throws<std::out_of_range>([&] { (void)records.read(deleted); }, "deleted record must not be readable");
+    const auto remaining = records.scan();
+    check(remaining.size() == 2 && remaining[0].id == first && remaining[1].id == last,
+          "scan should skip tombstones without renumbering other records");
+    const auto replacement = records.insert(bytes(std::string(1100, 'y')));
+    check(replacement == deleted, "insert should reuse the tombstoned record id");
+    check(text(records.read(first)) == "first" && text(records.read(last)) == "last",
+          "compaction and slot reuse must preserve other record ids");
+    check(heap.page_count() == 1, "reused space should avoid a new page");
+    pool.flush_all();
+  }
+  std::filesystem::remove(path);
+}
+
+void record_store_rejects_invalid_records() {
+  const auto path = std::filesystem::temp_directory_path() / "pageforge-record-invalid-test.db";
+  std::filesystem::remove(path);
+  {
+    auto heap = HeapFile::create(path);
+    BufferPool pool(heap, 1);
+    RecordStore records(pool);
+    check_throws<std::invalid_argument>([&] { (void)records.insert({}); }, "empty record should be rejected");
+    check_throws<PageFull>([&] { (void)records.insert(bytes(std::string(4067, 'z'))); },
+                           "oversized record should be rejected before allocation");
+    check(heap.page_count() == 0, "invalid records should not allocate pages");
+    check(!records.erase({3, 0}), "deleting an invalid page should return false");
+    check_throws<std::out_of_range>([&] { (void)records.read({3, 0}); },
+                                    "reading an invalid page should fail");
+  }
+  std::filesystem::remove(path);
+}
+
 }  // namespace
 
 int main() {
@@ -253,6 +329,9 @@ int main() {
       {"buffer pool dirty eviction", buffer_pool_writes_dirty_victims},
       {"buffer pool pin safety", buffer_pool_respects_pins},
       {"buffer pool allocation and flush", buffer_pool_flushes_allocated_pages},
+      {"record store multi-page persistence", record_store_spans_pages_and_reopens},
+      {"record store deletion and reuse", record_store_reuses_deleted_space},
+      {"record store input validation", record_store_rejects_invalid_records},
   };
   std::size_t passed = 0;
   for (const auto& [name, test] : tests) {

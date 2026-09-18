@@ -36,6 +36,7 @@ class SlottedPage {
   [[nodiscard]] PageId page_id() const;
   [[nodiscard]] std::size_t slot_count() const;
   [[nodiscard]] std::size_t live_records() const;
+  [[nodiscard]] bool contains(SlotId slot_id) const;
   [[nodiscard]] std::size_t free_space() const;
   [[nodiscard]] std::size_t reclaimable_space() const;
   [[nodiscard]] const Bytes& bytes() const noexcept { return bytes_; }
