@@ -14,6 +14,7 @@
 #include "pageforge/buffer_pool.hpp"
 #include "pageforge/page.hpp"
 #include "pageforge/record_store.hpp"
+#include "pageforge/tuple.hpp"
 
 namespace {
 
@@ -24,6 +25,8 @@ using pageforge::PageCorruption;
 using pageforge::PageFull;
 using pageforge::RecordStore;
 using pageforge::SlottedPage;
+using pageforge::TupleCodec;
+using pageforge::TupleCorruption;
 
 std::vector<std::byte> bytes(std::string_view value) {
   const auto* begin = reinterpret_cast<const std::byte*>(value.data());
@@ -314,6 +317,108 @@ void record_store_rejects_invalid_records() {
   std::filesystem::remove(path);
 }
 
+pageforge::Schema people_schema() {
+  return {{"id", pageforge::DataType::Integer, false},
+          {"name", pageforge::DataType::Text, false},
+          {"active", pageforge::DataType::Boolean, false},
+          {"note", pageforge::DataType::Text, true}};
+}
+
+void tuple_codec_round_trips_typed_values() {
+  const auto schema = people_schema();
+  const pageforge::Tuple tuple{std::int64_t{-42}, std::string("Ada \xF0\x9F\x97\x83"), true, std::monostate{}};
+  const auto encoded = TupleCodec::encode(schema, tuple);
+  check(encoded.size() == 30, "tuple encoding should have deterministic size");
+  check(encoded[0] == std::byte{'P'} && encoded[1] == std::byte{'F'} && encoded[2] == std::byte{'T'} &&
+            encoded[3] == std::byte{'1'},
+        "tuple encoding should have a portable format marker");
+  check(encoded[8] == std::byte{0x08}, "null bitmap should identify the nullable fourth column");
+  check(TupleCodec::decode(schema, encoded) == tuple, "mixed typed values should round-trip exactly");
+
+  const pageforge::Schema extremes{{"low", pageforge::DataType::Integer, false},
+                                   {"high", pageforge::DataType::Integer, false},
+                                   {"empty", pageforge::DataType::Text, false},
+                                   {"flag", pageforge::DataType::Boolean, false}};
+  const pageforge::Tuple boundary{std::numeric_limits<std::int64_t>::min(),
+                                  std::numeric_limits<std::int64_t>::max(), std::string{}, false};
+  check(TupleCodec::decode(extremes, TupleCodec::encode(extremes, boundary)) == boundary,
+        "integer boundaries and empty text should round-trip");
+}
+
+void tuple_codec_rejects_invalid_values() {
+  const auto schema = people_schema();
+  check_throws<std::invalid_argument>([&] { (void)TupleCodec::encode(schema, {std::int64_t{1}}); },
+                                      "wrong tuple arity should fail");
+  check_throws<std::invalid_argument>(
+      [&] { (void)TupleCodec::encode(schema, {std::int64_t{1}, std::string("Ada"), std::monostate{},
+                                              std::monostate{}}); },
+      "null in a required column should fail");
+  check_throws<std::invalid_argument>(
+      [&] { (void)TupleCodec::encode(schema, {std::string("wrong"), std::string("Ada"), true,
+                                              std::monostate{}}); },
+      "wrong value type should fail");
+  const pageforge::Schema unknown{{"mystery", static_cast<pageforge::DataType>(255), false}};
+  check_throws<std::invalid_argument>([&] { (void)TupleCodec::encode(unknown, {std::int64_t{1}}); },
+                                      "unknown schema type should fail");
+}
+
+void tuple_codec_detects_corruption() {
+  const pageforge::Schema schema{{"flag", pageforge::DataType::Boolean, false}};
+  const auto valid = TupleCodec::encode(schema, {true});
+  for (std::size_t size = 0; size < valid.size(); ++size) {
+    check_throws<TupleCorruption>([&] { (void)TupleCodec::decode(schema, std::span(valid).first(size)); },
+                                  "every truncated prefix should fail");
+  }
+  auto corrupt = valid;
+  corrupt[0] ^= std::byte{1};
+  check_throws<TupleCorruption>([&] { (void)TupleCodec::decode(schema, corrupt); }, "bad magic should fail");
+  corrupt = valid;
+  corrupt[8] = std::byte{0x01};
+  check_throws<TupleCorruption>([&] { (void)TupleCodec::decode(schema, corrupt); },
+                                "null in a required column should fail decoding");
+  corrupt = valid;
+  corrupt[8] = std::byte{0x80};
+  check_throws<TupleCorruption>([&] { (void)TupleCodec::decode(schema, corrupt); },
+                                "unknown null-bitmap bits should fail");
+  corrupt = valid;
+  corrupt[9] = std::byte{2};
+  check_throws<TupleCorruption>([&] { (void)TupleCodec::decode(schema, corrupt); },
+                                "invalid boolean byte should fail");
+  corrupt = valid;
+  corrupt.push_back(std::byte{0});
+  check_throws<TupleCorruption>([&] { (void)TupleCodec::decode(schema, corrupt); },
+                                "trailing payload should fail");
+
+  const pageforge::Schema text_schema{{"value", pageforge::DataType::Text, false}};
+  corrupt = TupleCodec::encode(text_schema, {std::string("short")});
+  corrupt[9] = std::byte{0xff};
+  check_throws<TupleCorruption>([&] { (void)TupleCodec::decode(text_schema, corrupt); },
+                                "text length beyond the payload should fail");
+}
+
+void typed_tuples_persist_in_record_store() {
+  const auto path = std::filesystem::temp_directory_path() / "pageforge-tuple-store-test.db";
+  std::filesystem::remove(path);
+  const auto schema = people_schema();
+  const pageforge::Tuple tuple{std::int64_t{7}, std::string("Grace"), false, std::string("compiler pioneer")};
+  pageforge::RecordId id{};
+  {
+    auto heap = HeapFile::create(path);
+    BufferPool pool(heap, 2);
+    RecordStore records(pool);
+    id = records.insert(TupleCodec::encode(schema, tuple));
+    pool.flush_all();
+  }
+  {
+    auto heap = HeapFile::open(path);
+    BufferPool pool(heap, 2);
+    RecordStore records(pool);
+    check(TupleCodec::decode(schema, records.read(id)) == tuple,
+          "typed tuple should survive the complete storage stack and reopen");
+  }
+  std::filesystem::remove(path);
+}
+
 }  // namespace
 
 int main() {
@@ -332,6 +437,10 @@ int main() {
       {"record store multi-page persistence", record_store_spans_pages_and_reopens},
       {"record store deletion and reuse", record_store_reuses_deleted_space},
       {"record store input validation", record_store_rejects_invalid_records},
+      {"typed tuple round-trip", tuple_codec_round_trips_typed_values},
+      {"typed tuple validation", tuple_codec_rejects_invalid_values},
+      {"typed tuple corruption detection", tuple_codec_detects_corruption},
+      {"typed tuple storage persistence", typed_tuples_persist_in_record_store},
   };
   std::size_t passed = 0;
   for (const auto& [name, test] : tests) {

@@ -17,6 +17,7 @@ compaction, a durable heap file, and a small buffer manager.
 - Durable page allocation, reads, writes, flushing, and reopen
 - Clock-sweep buffer pool with RAII pin guards and dirty-page eviction
 - Multi-page record store with `(page_id, slot_id)` IDs, deletion, and scans
+- Portable typed tuples with integers, text, booleans, nulls, and strict decoding
 - Text-record CLI for a reproducible, persistent storage demo
 - Bounds, overlap, truncation, format, and page-position validation
 - Warning-clean C++20 build on macOS and Linux CI
@@ -50,7 +51,9 @@ demo, not a SQL interface. Use a disposable path if you want to start over.
 The test suite writes only temporary heap files and removes them afterward. See
 [docs/STORAGE_FORMAT.md](docs/STORAGE_FORMAT.md) for byte layouts and validation
 rules, [docs/BUFFER_POOL.md](docs/BUFFER_POOL.md) for caching and writeback, and
-[docs/RECORD_STORE.md](docs/RECORD_STORE.md) for record-level behavior.
+[docs/RECORD_STORE.md](docs/RECORD_STORE.md) for record-level behavior. The
+[tuple-format notes](docs/TUPLES.md) document typed row encoding and its schema
+contract.
 
 ## Architecture roadmap
 
@@ -58,7 +61,8 @@ rules, [docs/BUFFER_POOL.md](docs/BUFFER_POOL.md) for caching and writeback, and
 - [x] Clock-sweep buffer pool with dirty-page eviction
 - [x] Heap record IDs, multi-page insertion, deletion, and scans
 - [ ] B+ tree indexes
-- [ ] Typed tuples and catalog metadata
+- [x] Typed tuple encoding and corruption validation
+- [ ] Catalog metadata and schema persistence
 - [ ] SQL lexer, parser, and logical plans
 - [ ] Iterator-based scans, filters, joins, and aggregation
 - [ ] Write-ahead logging and crash recovery
