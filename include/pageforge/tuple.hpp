@@ -16,6 +16,8 @@ struct Column {
   std::string name;
   DataType type;
   bool nullable = false;
+
+  bool operator==(const Column&) const = default;
 };
 
 using Schema = std::vector<Column>;

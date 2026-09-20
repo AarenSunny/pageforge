@@ -15,6 +15,7 @@
 #include "pageforge/page.hpp"
 #include "pageforge/record_store.hpp"
 #include "pageforge/tuple.hpp"
+#include "pageforge/catalog.hpp"
 
 namespace {
 
@@ -27,6 +28,8 @@ using pageforge::RecordStore;
 using pageforge::SlottedPage;
 using pageforge::TupleCodec;
 using pageforge::TupleCorruption;
+using pageforge::Catalog;
+using pageforge::CatalogCorruption;
 
 std::vector<std::byte> bytes(std::string_view value) {
   const auto* begin = reinterpret_cast<const std::byte*>(value.data());
@@ -419,6 +422,107 @@ void typed_tuples_persist_in_record_store() {
   std::filesystem::remove(path);
 }
 
+void catalog_persists_table_schemas() {
+  const auto path = std::filesystem::temp_directory_path() / "pageforge-catalog-test.db";
+  std::filesystem::remove(path);
+  const pageforge::TableDefinition people{"people", people_schema(), 3};
+  const pageforge::TableDefinition events{
+      "events", {{"event_id", pageforge::DataType::Integer, false},
+                 {"description", pageforge::DataType::Text, true}},
+      1};
+  {
+    auto heap = HeapFile::create(path);
+    BufferPool pool(heap, 2);
+    RecordStore records(pool);
+    (void)records.insert(bytes("ordinary user record"));
+    Catalog catalog(records);
+    const auto people_id = catalog.create_table(people);
+    const auto events_id = catalog.create_table(events);
+    check(people_id.page_id == 0 && events_id.page_id == 0, "small catalog entries should share a page");
+    check(catalog.find_table("people") == people, "created table should be immediately discoverable");
+    check(!catalog.find_table("missing"), "unknown table should return no definition");
+    const auto tables = catalog.list_tables();
+    check(tables.size() == 2 && tables[0] == people && tables[1] == events,
+          "catalog should ignore ordinary records and preserve creation order");
+    pool.flush_all();
+  }
+  {
+    auto heap = HeapFile::open(path);
+    BufferPool pool(heap, 1);
+    RecordStore records(pool);
+    Catalog catalog(records);
+    check(catalog.find_table("people") == people, "table schema and version should survive reopen");
+    check(catalog.find_table("events") == events, "nullable columns should survive reopen");
+  }
+  std::filesystem::remove(path);
+}
+
+void catalog_validates_definitions() {
+  const auto path = std::filesystem::temp_directory_path() / "pageforge-catalog-validation-test.db";
+  std::filesystem::remove(path);
+  {
+    auto heap = HeapFile::create(path);
+    BufferPool pool(heap, 2);
+    RecordStore records(pool);
+    Catalog catalog(records);
+    check_throws<std::invalid_argument>([&] { (void)catalog.create_table({"", people_schema(), 1}); },
+                                        "empty table name should fail");
+    check_throws<std::invalid_argument>([&] { (void)catalog.create_table({"empty", {}, 1}); },
+                                        "empty table schema should fail");
+    check_throws<std::invalid_argument>(
+        [&] {
+          (void)catalog.create_table(
+              {"duplicates", {{"id", pageforge::DataType::Integer, false},
+                               {"id", pageforge::DataType::Text, false}}, 1});
+        },
+        "duplicate column names should fail");
+    check_throws<std::invalid_argument>([&] { (void)catalog.create_table({"zero", people_schema(), 0}); },
+                                        "zero schema version should fail");
+    check_throws<std::invalid_argument>(
+        [&] {
+          (void)catalog.create_table(
+              {"unknown", {{"value", static_cast<pageforge::DataType>(255), false}}, 1});
+        },
+        "unknown column type should fail");
+    const pageforge::TableDefinition valid{"people", people_schema(), 1};
+    (void)catalog.create_table(valid);
+    check_throws<std::invalid_argument>([&] { (void)catalog.create_table(valid); },
+                                        "duplicate table name should fail");
+  }
+  std::filesystem::remove(path);
+}
+
+void catalog_detects_corrupt_metadata() {
+  const auto path = std::filesystem::temp_directory_path() / "pageforge-catalog-corruption-test.db";
+  std::filesystem::remove(path);
+  {
+    auto heap = HeapFile::create(path);
+    BufferPool pool(heap, 2);
+    RecordStore records(pool);
+    Catalog catalog(records);
+    const pageforge::TableDefinition table{"people", people_schema(), 1};
+    const auto id = catalog.create_table(table);
+    const auto encoded = records.read(id);
+    (void)records.insert(encoded);
+    check_throws<CatalogCorruption>([&] { (void)catalog.list_tables(); },
+                                    "duplicate persisted table names should be corruption");
+  }
+  std::filesystem::remove(path);
+
+  const auto truncated_path = std::filesystem::temp_directory_path() / "pageforge-catalog-truncated-test.db";
+  std::filesystem::remove(truncated_path);
+  {
+    auto heap = HeapFile::create(truncated_path);
+    BufferPool pool(heap, 1);
+    RecordStore records(pool);
+    (void)records.insert(bytes("PFC1"));
+    Catalog catalog(records);
+    check_throws<CatalogCorruption>([&] { (void)catalog.list_tables(); },
+                                    "truncated reserved catalog record should fail");
+  }
+  std::filesystem::remove(truncated_path);
+}
+
 }  // namespace
 
 int main() {
@@ -441,6 +545,9 @@ int main() {
       {"typed tuple validation", tuple_codec_rejects_invalid_values},
       {"typed tuple corruption detection", tuple_codec_detects_corruption},
       {"typed tuple storage persistence", typed_tuples_persist_in_record_store},
+      {"catalog schema persistence", catalog_persists_table_schemas},
+      {"catalog definition validation", catalog_validates_definitions},
+      {"catalog corruption detection", catalog_detects_corrupt_metadata},
   };
   std::size_t passed = 0;
   for (const auto& [name, test] : tests) {

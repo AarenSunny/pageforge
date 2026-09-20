@@ -6,7 +6,7 @@ visible and testable rather than hiding them behind an existing database.
 
 The current milestone implements the physical storage foundation: portable
 checksummed pages, variable-length records, stable record identifiers, page
-compaction, a durable heap file, and a small buffer manager.
+compaction, a durable heap file, a buffer manager, and typed catalog metadata.
 
 ## Current capabilities
 
@@ -18,6 +18,7 @@ compaction, a durable heap file, and a small buffer manager.
 - Clock-sweep buffer pool with RAII pin guards and dirty-page eviction
 - Multi-page record store with `(page_id, slot_id)` IDs, deletion, and scans
 - Portable typed tuples with integers, text, booleans, nulls, and strict decoding
+- Persistent table catalog with named, versioned schemas and duplicate detection
 - Text-record CLI for a reproducible, persistent storage demo
 - Bounds, overlap, truncation, format, and page-position validation
 - Warning-clean C++20 build on macOS and Linux CI
@@ -53,7 +54,8 @@ The test suite writes only temporary heap files and removes them afterward. See
 rules, [docs/BUFFER_POOL.md](docs/BUFFER_POOL.md) for caching and writeback, and
 [docs/RECORD_STORE.md](docs/RECORD_STORE.md) for record-level behavior. The
 [tuple-format notes](docs/TUPLES.md) document typed row encoding and its schema
-contract.
+contract, while [docs/CATALOG.md](docs/CATALOG.md) describes persisted table
+definitions and reserved metadata records.
 
 ## Architecture roadmap
 
@@ -62,7 +64,7 @@ contract.
 - [x] Heap record IDs, multi-page insertion, deletion, and scans
 - [ ] B+ tree indexes
 - [x] Typed tuple encoding and corruption validation
-- [ ] Catalog metadata and schema persistence
+- [x] Catalog metadata and schema persistence
 - [ ] SQL lexer, parser, and logical plans
 - [ ] Iterator-based scans, filters, joins, and aggregation
 - [ ] Write-ahead logging and crash recovery
