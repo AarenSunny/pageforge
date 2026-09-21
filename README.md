@@ -19,6 +19,7 @@ compaction, a durable heap file, a buffer manager, and typed catalog metadata.
 - Multi-page record store with `(page_id, slot_id)` IDs, deletion, and scans
 - Portable typed tuples with integers, text, booleans, nulls, and strict decoding
 - Persistent table catalog with named, versioned schemas and duplicate detection
+- Typed table rows with schema-bound insert, read, scan, and delete operations
 - Text-record CLI for a reproducible, persistent storage demo
 - Bounds, overlap, truncation, format, and page-position validation
 - Warning-clean C++20 build on macOS and Linux CI
@@ -55,7 +56,8 @@ rules, [docs/BUFFER_POOL.md](docs/BUFFER_POOL.md) for caching and writeback, and
 [docs/RECORD_STORE.md](docs/RECORD_STORE.md) for record-level behavior. The
 [tuple-format notes](docs/TUPLES.md) document typed row encoding and its schema
 contract, while [docs/CATALOG.md](docs/CATALOG.md) describes persisted table
-definitions and reserved metadata records.
+definitions. [docs/TABLE_STORE.md](docs/TABLE_STORE.md) shows the typed-table
+API and row envelope.
 
 ## Architecture roadmap
 
@@ -65,6 +67,7 @@ definitions and reserved metadata records.
 - [ ] B+ tree indexes
 - [x] Typed tuple encoding and corruption validation
 - [x] Catalog metadata and schema persistence
+- [x] Typed table rows with logical table isolation
 - [ ] SQL lexer, parser, and logical plans
 - [ ] Iterator-based scans, filters, joins, and aggregation
 - [ ] Write-ahead logging and crash recovery

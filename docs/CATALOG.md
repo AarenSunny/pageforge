@@ -40,10 +40,11 @@ bit zero. Identifier strings are stored as bytes without Unicode normalization.
 ## Current boundaries
 
 Records without the reserved prefix are ignored, which lets catalog metadata
-coexist with ordinary records during this stage. Application data beginning
-with `PFC1` is therefore reserved and may be interpreted as metadata. The
-planned table-storage layer will separate system and table records so this
-temporary shared namespace disappears.
+coexist with typed rows and ordinary records. Application data beginning with
+`PFC1` is reserved and may be interpreted as metadata. Typed rows use their own
+`PFR1` prefix and are logically separated by table name, but system and user
+records still share physical heap pages. Dedicated table storage will remove
+this temporary shared namespace.
 
 Catalog creation becomes durable at the buffer pool's explicit `flush_all()`
 boundary. Schema alteration, table deletion, transactional DDL, and concurrent

@@ -45,7 +45,8 @@ invalid booleans, illegal nulls, unknown bitmap bits, and trailing bytes. Text
 length is checked against remaining input before allocating its string.
 
 Types are not repeated in each row. A decoder therefore needs the same schema
-used by the encoder. The planned catalog will persist schema versions and bind
-each stored row to one of them; until then, callers own that contract. Tuples
-larger than a slotted page can be encoded, but the record store will reject them
-because overflow records are not implemented yet.
+used by the encoder. The catalog now persists the schema, and the table-store
+envelope binds a row to its table name and schema version. Schema evolution is
+not implemented: a row whose version differs from the catalog is rejected.
+Tuples larger than a slotted page can be encoded, but the record store will
+reject them because overflow records are not implemented yet.

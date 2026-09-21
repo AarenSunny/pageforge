@@ -16,6 +16,7 @@
 #include "pageforge/record_store.hpp"
 #include "pageforge/tuple.hpp"
 #include "pageforge/catalog.hpp"
+#include "pageforge/table_store.hpp"
 
 namespace {
 
@@ -30,6 +31,8 @@ using pageforge::TupleCodec;
 using pageforge::TupleCorruption;
 using pageforge::Catalog;
 using pageforge::CatalogCorruption;
+using pageforge::TableStore;
+using pageforge::TableCorruption;
 
 std::vector<std::byte> bytes(std::string_view value) {
   const auto* begin = reinterpret_cast<const std::byte*>(value.data());
@@ -523,6 +526,117 @@ void catalog_detects_corrupt_metadata() {
   std::filesystem::remove(truncated_path);
 }
 
+void typed_tables_persist_and_isolate_rows() {
+  const auto path = std::filesystem::temp_directory_path() / "pageforge-tables-test.db";
+  std::filesystem::remove(path);
+  const pageforge::Tuple ada{std::int64_t{1}, std::string("Ada"), true, std::monostate{}};
+  const pageforge::Tuple grace{std::int64_t{2}, std::string("Grace"), false, std::string("compiler")};
+  const pageforge::Tuple event{std::int64_t{9}, std::string("launch")};
+  pageforge::RecordId ada_id{};
+  pageforge::RecordId grace_id{};
+  {
+    auto heap = HeapFile::create(path);
+    BufferPool pool(heap, 1);
+    RecordStore records(pool);
+    Catalog catalog(records);
+    (void)catalog.create_table({"people", people_schema(), 1});
+    (void)catalog.create_table({"events", {{"id", pageforge::DataType::Integer, false},
+                                           {"title", pageforge::DataType::Text, false}}, 1});
+    (void)records.insert(bytes("untyped record"));
+    TableStore tables(records, catalog);
+    ada_id = tables.insert("people", ada);
+    grace_id = tables.insert("people", grace);
+    const auto event_id = tables.insert("events", event);
+    check(tables.read("people", ada_id) == ada, "typed table read should decode values");
+    check(tables.read("events", event_id) == event, "second table should use its own schema");
+    check_throws<std::invalid_argument>([&] { (void)tables.read("events", ada_id); },
+                                        "a row must not be read under another table");
+    const auto people = tables.scan("people");
+    check(people.size() == 2 && people[0].id == ada_id && people[0].values == ada &&
+              people[1].id == grace_id && people[1].values == grace,
+          "table scan should ignore catalog entries, raw records, and other tables");
+    check(tables.scan("events").size() == 1, "other table scan should be isolated");
+    pool.flush_all();
+  }
+  {
+    auto heap = HeapFile::open(path);
+    BufferPool pool(heap, 1);
+    RecordStore records(pool);
+    Catalog catalog(records);
+    TableStore tables(records, catalog);
+    check(tables.read("people", ada_id) == ada, "table row should survive reopen");
+    check(tables.scan("people").size() == 2, "table scan should survive reopen");
+    check(tables.erase("people", grace_id), "table row should be deletable");
+    check(!tables.erase("people", grace_id), "deleting the same row twice should return false");
+    check(tables.scan("people").size() == 1, "scan should omit deleted rows");
+    pool.flush_all();
+  }
+  std::filesystem::remove(path);
+}
+
+void typed_tables_validate_input_and_ownership() {
+  const auto path = std::filesystem::temp_directory_path() / "pageforge-tables-validation-test.db";
+  std::filesystem::remove(path);
+  {
+    auto heap = HeapFile::create(path);
+    BufferPool pool(heap, 2);
+    RecordStore records(pool);
+    Catalog catalog(records);
+    (void)catalog.create_table({"people", people_schema(), 1});
+    (void)catalog.create_table({"events", {{"id", pageforge::DataType::Integer, false}}, 1});
+    TableStore tables(records, catalog);
+    check_throws<std::out_of_range>([&] { (void)tables.insert("missing", {std::int64_t{1}}); },
+                                    "unknown table should reject insertion");
+    check_throws<std::invalid_argument>([&] { (void)tables.insert("people", {std::int64_t{1}}); },
+                                        "tuple arity should be checked before insertion");
+    check_throws<std::invalid_argument>(
+        [&] { (void)tables.insert("events", {std::string("wrong type")}); },
+        "tuple types should be checked before insertion");
+    const auto id = tables.insert("events", {std::int64_t{7}});
+    check_throws<std::invalid_argument>([&] { (void)tables.erase("people", id); },
+                                        "delete must reject a row owned by another table");
+    check(tables.read("events", id) == pageforge::Tuple{std::int64_t{7}},
+          "wrong-table delete must leave the row intact");
+  }
+  std::filesystem::remove(path);
+}
+
+void typed_tables_detect_corrupt_envelopes() {
+  const auto path = std::filesystem::temp_directory_path() / "pageforge-tables-corruption-test.db";
+  std::filesystem::remove(path);
+  {
+    auto heap = HeapFile::create(path);
+    BufferPool pool(heap, 2);
+    RecordStore records(pool);
+    Catalog catalog(records);
+    (void)catalog.create_table({"events", {{"id", pageforge::DataType::Integer, false}}, 1});
+    TableStore tables(records, catalog);
+    (void)records.insert(bytes("PFR1"));
+    check_throws<TableCorruption>([&] { (void)tables.scan("events"); },
+                                  "truncated row envelope should fail scanning");
+  }
+  std::filesystem::remove(path);
+
+  const auto version_path = std::filesystem::temp_directory_path() / "pageforge-tables-version-test.db";
+  std::filesystem::remove(version_path);
+  {
+    auto heap = HeapFile::create(version_path);
+    BufferPool pool(heap, 2);
+    RecordStore records(pool);
+    Catalog catalog(records);
+    (void)catalog.create_table({"events", {{"id", pageforge::DataType::Integer, false}}, 1});
+    TableStore tables(records, catalog);
+    const auto id = tables.insert("events", {std::int64_t{7}});
+    auto encoded = records.read(id);
+    encoded[6] = std::byte{2};  // Encoded schema version starts after magic and envelope version.
+    check(records.erase(id), "original row should be removable before corruption test");
+    (void)records.insert(encoded);
+    check_throws<TableCorruption>([&] { (void)tables.scan("events"); },
+                                  "row with unknown schema version should fail decoding");
+  }
+  std::filesystem::remove(version_path);
+}
+
 }  // namespace
 
 int main() {
@@ -548,6 +662,9 @@ int main() {
       {"catalog schema persistence", catalog_persists_table_schemas},
       {"catalog definition validation", catalog_validates_definitions},
       {"catalog corruption detection", catalog_detects_corrupt_metadata},
+      {"typed table persistence and isolation", typed_tables_persist_and_isolate_rows},
+      {"typed table input and ownership validation", typed_tables_validate_input_and_ownership},
+      {"typed table corruption detection", typed_tables_detect_corrupt_envelopes},
   };
   std::size_t passed = 0;
   for (const auto& [name, test] : tests) {
