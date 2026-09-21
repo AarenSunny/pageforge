@@ -20,6 +20,7 @@ compaction, a durable heap file, a buffer manager, and typed catalog metadata.
 - Portable typed tuples with integers, text, booleans, nulls, and strict decoding
 - Persistent table catalog with named, versioned schemas and duplicate detection
 - Typed table rows with schema-bound insert, read, scan, and delete operations
+- Streaming record and typed-table cursors without materializing row sets
 - Text-record CLI for a reproducible, persistent storage demo
 - Bounds, overlap, truncation, format, and page-position validation
 - Warning-clean C++20 build on macOS and Linux CI
@@ -68,8 +69,9 @@ API and row envelope.
 - [x] Typed tuple encoding and corruption validation
 - [x] Catalog metadata and schema persistence
 - [x] Typed table rows with logical table isolation
+- [x] Streaming record and typed-table scans
 - [ ] SQL lexer, parser, and logical plans
-- [ ] Iterator-based scans, filters, joins, and aggregation
+- [ ] Iterator-based filters, joins, and aggregation
 - [ ] Write-ahead logging and crash recovery
 - [ ] Transactions, locking, and isolation
 - [x] Persistent text-record CLI and end-to-end smoke test

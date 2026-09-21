@@ -102,6 +102,20 @@ Tuple decode_row(const TableDefinition& table, const RowEnvelope& envelope) {
 
 }  // namespace
 
+TableCursor::TableCursor(RecordCursor cursor, TableDefinition table)
+    : cursor_(std::move(cursor)), table_(std::move(table)) {}
+
+std::optional<TableRow> TableCursor::next() {
+  while (auto record = cursor_.next()) {
+    if (!has_magic(record->bytes)) continue;
+    const auto envelope = parse(record->bytes);
+    if (envelope.table_name == table_.name) {
+      return TableRow{record->id, decode_row(table_, envelope)};
+    }
+  }
+  return std::nullopt;
+}
+
 TableDefinition TableStore::require_table(std::string_view name) {
   auto table = catalog_.find_table(name);
   if (!table) throw std::out_of_range("table does not exist");
@@ -122,14 +136,15 @@ Tuple TableStore::read(std::string_view table_name, RecordId id) {
   return decode_row(table, envelope);
 }
 
+TableCursor TableStore::cursor(std::string_view table_name) {
+  auto table = require_table(table_name);
+  return TableCursor(records_.cursor(), std::move(table));
+}
+
 std::vector<TableRow> TableStore::scan(std::string_view table_name) {
-  const auto table = require_table(table_name);
   std::vector<TableRow> rows;
-  for (const auto& record : records_.scan()) {
-    if (!has_magic(record.bytes)) continue;
-    const auto envelope = parse(record.bytes);
-    if (envelope.table_name == table.name) rows.push_back({record.id, decode_row(table, envelope)});
-  }
+  auto reader = cursor(table_name);
+  while (auto row = reader.next()) rows.push_back(std::move(*row));
   return rows;
 }
 

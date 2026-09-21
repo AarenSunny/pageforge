@@ -1,8 +1,30 @@
 #include "pageforge/record_store.hpp"
 
 #include <stdexcept>
+#include <utility>
 
 namespace pageforge {
+
+RecordCursor::RecordCursor(RecordCursor&& other) noexcept
+    : pool_(other.pool_), next_page_(other.next_page_), next_slot_(other.next_slot_),
+      end_page_(other.end_page_) {
+  other.next_page_ = other.end_page_;
+}
+
+std::optional<Record> RecordCursor::next() {
+  while (next_page_ < end_page_) {
+    const auto guard = pool_.fetch(next_page_);
+    while (next_slot_ < guard.page().slot_count()) {
+      const auto slot_id = static_cast<SlotId>(next_slot_++);
+      if (guard.page().contains(slot_id)) {
+        return Record{{next_page_, slot_id}, guard.page().read(slot_id)};
+      }
+    }
+    ++next_page_;
+    next_slot_ = 0;
+  }
+  return std::nullopt;
+}
 
 RecordId RecordStore::insert(std::span<const std::byte> bytes) {
   if (bytes.empty()) throw std::invalid_argument("records must not be empty");
@@ -35,17 +57,12 @@ bool RecordStore::erase(RecordId id) {
   return guard.mutable_page().erase(id.slot_id);
 }
 
+RecordCursor RecordStore::cursor() { return RecordCursor(pool_); }
+
 std::vector<Record> RecordStore::scan() {
   std::vector<Record> records;
-  for (PageId page_id = 0; page_id < pool_.page_count(); ++page_id) {
-    const auto guard = pool_.fetch(page_id);
-    for (std::size_t slot = 0; slot < guard.page().slot_count(); ++slot) {
-      const auto slot_id = static_cast<SlotId>(slot);
-      if (guard.page().contains(slot_id)) {
-        records.push_back({{page_id, slot_id}, guard.page().read(slot_id)});
-      }
-    }
-  }
+  auto reader = cursor();
+  while (auto record = reader.next()) records.push_back(std::move(*record));
   return records;
 }
 

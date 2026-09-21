@@ -20,6 +20,10 @@ pageforge::TableStore tables(records, catalog);
 });
 auto id = tables.insert("people", {std::int64_t{7}, std::string("Ada")});
 auto row = tables.read("people", id);
+auto cursor = tables.cursor("people");
+while (auto next = cursor.next()) {
+    // Process next->id and next->values without loading the whole table.
+}
 pool.flush_all();
 ```
 
@@ -46,8 +50,10 @@ skipped. Deletion checks ownership before tombstoning the underlying slot.
 
 Isolation is logical, not physical: all tables and the catalog still share the
 same heap pages. The `PFR1` and `PFC1` prefixes are reserved, so raw application
-records beginning with either prefix can collide with system formats. Table
-scans currently materialize their results in memory, and insertion linearly
+records beginning with either prefix can collide with system formats. The
+table's `cursor()` streams decoded rows one at a time; `scan()` materializes
+them for convenience. A cursor captures the initial heap page count but is not a
+transactional snapshot of later changes to existing pages. Insertion linearly
 searches heap pages for space. There is no schema migration, transaction, or
 concurrent writer support yet. A deleted record ID can be reused by a later
 insert, so callers must not treat old IDs as permanent external keys.

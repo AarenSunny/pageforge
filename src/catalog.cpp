@@ -176,19 +176,25 @@ RecordId Catalog::create_table(const TableDefinition& table) {
 }
 
 std::optional<TableDefinition> Catalog::find_table(std::string_view name) {
-  const auto tables = list_tables();
-  for (const auto& table : tables) {
-    if (table.name == name) return table;
+  std::optional<TableDefinition> found;
+  std::unordered_set<std::string> names;
+  auto cursor = records_.cursor();
+  while (auto record = cursor.next()) {
+    if (!has_magic(record->bytes)) continue;
+    auto table = decode(record->bytes);
+    if (!names.insert(table.name).second) throw CatalogCorruption("catalog contains duplicate table names");
+    if (table.name == name) found = std::move(table);
   }
-  return std::nullopt;
+  return found;
 }
 
 std::vector<TableDefinition> Catalog::list_tables() {
   std::vector<TableDefinition> tables;
   std::unordered_set<std::string> names;
-  for (const auto& record : records_.scan()) {
-    if (!has_magic(record.bytes)) continue;
-    auto table = decode(record.bytes);
+  auto cursor = records_.cursor();
+  while (auto record = cursor.next()) {
+    if (!has_magic(record->bytes)) continue;
+    auto table = decode(record->bytes);
     if (!names.insert(table.name).second) throw CatalogCorruption("catalog contains duplicate table names");
     tables.push_back(std::move(table));
   }

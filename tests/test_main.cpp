@@ -8,6 +8,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "pageforge/heap_file.hpp"
@@ -323,6 +324,35 @@ void record_store_rejects_invalid_records() {
   std::filesystem::remove(path);
 }
 
+void record_cursor_streams_without_pins() {
+  const auto path = std::filesystem::temp_directory_path() / "pageforge-record-cursor-test.db";
+  std::filesystem::remove(path);
+  {
+    auto heap = HeapFile::create(path);
+    BufferPool pool(heap, 1);
+    RecordStore records(pool);
+    const auto first = records.insert(bytes(std::string(4066, 'a')));
+    const auto second = records.insert(bytes(std::string(4066, 'b')));
+    auto reader = records.cursor();
+    const auto one = reader.next();
+    check(one && one->id == first && one->bytes.size() == 4066,
+          "cursor should return the first page's record");
+    {
+      const auto guard = pool.fetch(1);
+      check(guard.page_id() == second.page_id, "cursor must not retain a pin between next calls");
+    }
+    (void)records.insert(bytes(std::string(4066, 'c')));
+    auto moved_reader = std::move(reader);
+    check(!reader.next(), "moved-from cursor should be exhausted");
+    const auto two = moved_reader.next();
+    check(two && two->id == second && two->bytes.size() == 4066,
+          "cursor should continue to the next page with a one-frame buffer pool");
+    check(!moved_reader.next(), "cursor should not include pages allocated after its creation");
+    check(!moved_reader.next(), "exhausted cursor should remain exhausted");
+  }
+  std::filesystem::remove(path);
+}
+
 pageforge::Schema people_schema() {
   return {{"id", pageforge::DataType::Integer, false},
           {"name", pageforge::DataType::Text, false},
@@ -556,6 +586,13 @@ void typed_tables_persist_and_isolate_rows() {
               people[1].id == grace_id && people[1].values == grace,
           "table scan should ignore catalog entries, raw records, and other tables");
     check(tables.scan("events").size() == 1, "other table scan should be isolated");
+    auto reader = tables.cursor("people");
+    const auto first = reader.next();
+    const auto second = reader.next();
+    check(first && first->id == ada_id && first->values == ada && second &&
+              second->id == grace_id && second->values == grace,
+          "table cursor should stream only the named table's rows in record order");
+    check(!reader.next(), "table cursor should signal exhaustion");
     pool.flush_all();
   }
   {
@@ -655,6 +692,7 @@ int main() {
       {"record store multi-page persistence", record_store_spans_pages_and_reopens},
       {"record store deletion and reuse", record_store_reuses_deleted_space},
       {"record store input validation", record_store_rejects_invalid_records},
+      {"record cursor streaming and pin safety", record_cursor_streams_without_pins},
       {"typed tuple round-trip", tuple_codec_round_trips_typed_values},
       {"typed tuple validation", tuple_codec_rejects_invalid_values},
       {"typed tuple corruption detection", tuple_codec_detects_corruption},
