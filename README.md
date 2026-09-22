@@ -21,6 +21,7 @@ compaction, a durable heap file, a buffer manager, and typed catalog metadata.
 - Persistent table catalog with named, versioned schemas and duplicate detection
 - Typed table rows with schema-bound insert, read, scan, and delete operations
 - Streaming record and typed-table cursors without materializing row sets
+- Lazy query operators for filtering, projection, and limits
 - Text-record CLI for a reproducible, persistent storage demo
 - Bounds, overlap, truncation, format, and page-position validation
 - Warning-clean C++20 build on macOS and Linux CI
@@ -58,7 +59,8 @@ rules, [docs/BUFFER_POOL.md](docs/BUFFER_POOL.md) for caching and writeback, and
 [tuple-format notes](docs/TUPLES.md) document typed row encoding and its schema
 contract, while [docs/CATALOG.md](docs/CATALOG.md) describes persisted table
 definitions. [docs/TABLE_STORE.md](docs/TABLE_STORE.md) shows the typed-table
-API and row envelope.
+API and row envelope. [docs/QUERY_EXECUTION.md](docs/QUERY_EXECUTION.md)
+demonstrates the composable streaming query pipeline.
 
 ## Architecture roadmap
 
@@ -70,8 +72,9 @@ API and row envelope.
 - [x] Catalog metadata and schema persistence
 - [x] Typed table rows with logical table isolation
 - [x] Streaming record and typed-table scans
+- [x] Streaming filter, projection, and limit operators
 - [ ] SQL lexer, parser, and logical plans
-- [ ] Iterator-based filters, joins, and aggregation
+- [ ] Joins and aggregation
 - [ ] Write-ahead logging and crash recovery
 - [ ] Transactions, locking, and isolation
 - [x] Persistent text-record CLI and end-to-end smoke test

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <optional>
 #include <stdexcept>
 #include <string_view>
@@ -26,6 +27,7 @@ class TableCursor {
   TableCursor(TableCursor&&) = default;
 
   [[nodiscard]] std::optional<TableRow> next();
+  [[nodiscard]] std::size_t column_count() const noexcept { return table_.schema.size(); }
 
  private:
   friend class TableStore;

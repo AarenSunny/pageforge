@@ -18,6 +18,7 @@
 #include "pageforge/tuple.hpp"
 #include "pageforge/catalog.hpp"
 #include "pageforge/table_store.hpp"
+#include "pageforge/query.hpp"
 
 namespace {
 
@@ -34,6 +35,7 @@ using pageforge::Catalog;
 using pageforge::CatalogCorruption;
 using pageforge::TableStore;
 using pageforge::TableCorruption;
+using pageforge::Query;
 
 std::vector<std::byte> bytes(std::string_view value) {
   const auto* begin = reinterpret_cast<const std::byte*>(value.data());
@@ -674,6 +676,92 @@ void typed_tables_detect_corrupt_envelopes() {
   std::filesystem::remove(version_path);
 }
 
+void query_pipeline_filters_projects_and_limits() {
+  const auto path = std::filesystem::temp_directory_path() / "pageforge-query-test.db";
+  std::filesystem::remove(path);
+  {
+    auto heap = HeapFile::create(path);
+    BufferPool pool(heap, 1);
+    RecordStore records(pool);
+    Catalog catalog(records);
+    (void)catalog.create_table({"people", people_schema(), 1});
+    TableStore tables(records, catalog);
+    const auto ada_id = tables.insert("people", {std::int64_t{1}, std::string("Ada"), true,
+                                                std::monostate{}});
+    (void)tables.insert("people", {std::int64_t{2}, std::string("Bob"), false,
+                                   std::string("analyst")});
+    (void)tables.insert("people", {std::int64_t{3}, std::string("Grace"), true,
+                                   std::monostate{}});
+
+    std::size_t examined = 0;
+    auto query = Query::from(tables, "people");
+    query.filter([&](const pageforge::TableRow& row) {
+           ++examined;
+           return std::holds_alternative<std::monostate>(row.values[3]);
+         })
+        .project({1, 0, 1})
+        .limit(1);
+    check(query.column_count() == 3, "projection should update the query's output width");
+    const auto first = query.next();
+    check(first && first->id == ada_id &&
+              first->values == pageforge::Tuple{std::string("Ada"), std::int64_t{1}, std::string("Ada")},
+          "query should filter nulls, reorder columns, and permit repeated columns");
+    check(examined == 1, "limit should not pull extra rows before yielding the first result");
+    check(!query.next() && examined == 1, "exhausted limit must not pull upstream rows");
+
+    auto active = Query::from(tables, "people");
+    active.filter([](const pageforge::TableRow& row) { return std::get<bool>(row.values[2]); })
+        .project({1});
+    const auto a = active.next();
+    const auto g = active.next();
+    check(a && a->values == pageforge::Tuple{std::string("Ada")} &&
+              g && g->values == pageforge::Tuple{std::string("Grace")} && !active.next(),
+          "filter and projection should stream matching rows in stable order");
+  }
+  std::filesystem::remove(path);
+}
+
+void query_pipeline_validates_and_short_circuits() {
+  const auto path = std::filesystem::temp_directory_path() / "pageforge-query-validation-test.db";
+  std::filesystem::remove(path);
+  {
+    auto heap = HeapFile::create(path);
+    BufferPool pool(heap, 1);
+    RecordStore records(pool);
+    Catalog catalog(records);
+    (void)catalog.create_table({"items", {{"id", pageforge::DataType::Integer, false}}, 1});
+    TableStore tables(records, catalog);
+    (void)tables.insert("items", {std::int64_t{7}});
+
+    check_throws<std::out_of_range>([&] { (void)Query::from(tables, "missing"); },
+                                    "query should reject an unknown table");
+    auto invalid = Query::from(tables, "items");
+    check_throws<std::invalid_argument>([&] { invalid.filter({}); },
+                                        "query should reject an empty predicate");
+    check_throws<std::out_of_range>([&] { invalid.project({1}); },
+                                    "projection should validate indices before consuming rows");
+    check(invalid.column_count() == 1 && invalid.next(),
+          "failed query construction should leave the original scan usable");
+
+    std::size_t examined = 0;
+    auto zero = Query::from(tables, "items");
+    zero.filter([&](const pageforge::TableRow&) {
+          ++examined;
+          return true;
+        })
+        .limit(0);
+    check(!zero.next() && examined == 0, "limit zero must not pull any input rows");
+
+    auto chained = Query::from(tables, "items");
+    chained.project({0, 0});
+    check_throws<std::out_of_range>([&] { chained.project({2}); },
+                                    "later projections should validate against the current row width");
+    check(chained.next()->values == pageforge::Tuple{std::int64_t{7}, std::int64_t{7}},
+          "valid projection should remain usable after a rejected projection");
+  }
+  std::filesystem::remove(path);
+}
+
 }  // namespace
 
 int main() {
@@ -703,6 +791,8 @@ int main() {
       {"typed table persistence and isolation", typed_tables_persist_and_isolate_rows},
       {"typed table input and ownership validation", typed_tables_validate_input_and_ownership},
       {"typed table corruption detection", typed_tables_detect_corrupt_envelopes},
+      {"query filter, projection, and limit", query_pipeline_filters_projects_and_limits},
+      {"query validation and lazy limit", query_pipeline_validates_and_short_circuits},
   };
   std::size_t passed = 0;
   for (const auto& [name, test] : tests) {
