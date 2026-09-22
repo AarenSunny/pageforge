@@ -19,6 +19,7 @@
 #include "pageforge/catalog.hpp"
 #include "pageforge/table_store.hpp"
 #include "pageforge/query.hpp"
+#include "pageforge/sql_lexer.hpp"
 
 namespace {
 
@@ -36,6 +37,8 @@ using pageforge::CatalogCorruption;
 using pageforge::TableStore;
 using pageforge::TableCorruption;
 using pageforge::Query;
+using pageforge::SqlLexError;
+using pageforge::SqlTokenKind;
 
 std::vector<std::byte> bytes(std::string_view value) {
   const auto* begin = reinterpret_cast<const std::byte*>(value.data());
@@ -762,6 +765,77 @@ void query_pipeline_validates_and_short_circuits() {
   std::filesystem::remove(path);
 }
 
+void sql_lexer_recognizes_literals_and_positions() {
+  const auto tokens = pageforge::lex_sql(
+      "\nSELECT name, age FROM people\r\nWHERE age >= -18 AND name <> 'O''Neil'; -- tail\n");
+  const std::vector<SqlTokenKind> expected{
+      SqlTokenKind::Identifier, SqlTokenKind::Identifier, SqlTokenKind::Comma,
+      SqlTokenKind::Identifier, SqlTokenKind::Identifier, SqlTokenKind::Identifier,
+      SqlTokenKind::Identifier, SqlTokenKind::Identifier, SqlTokenKind::GreaterEqual,
+      SqlTokenKind::Minus, SqlTokenKind::Integer, SqlTokenKind::Identifier,
+      SqlTokenKind::Identifier, SqlTokenKind::NotEqual, SqlTokenKind::String,
+      SqlTokenKind::Semicolon, SqlTokenKind::End};
+  std::vector<SqlTokenKind> actual;
+  for (const auto& token : tokens) actual.push_back(token.kind);
+  check(actual == expected, "SQL lexer should recognize names, numbers, comparisons, and punctuation");
+  check(tokens[0].text == "SELECT" && tokens[0].offset == 1 && tokens[0].line == 2 &&
+            tokens[0].column == 1,
+        "first token should retain its source location");
+  check(tokens[6].text == "WHERE" && tokens[6].line == 3 && tokens[6].column == 1,
+        "CRLF should count as one line break");
+  check(tokens[14].text == "O'Neil", "doubled apostrophes should decode inside string literals");
+  check(tokens.back().line == 4 && tokens.back().column == 1,
+        "end token should point after the final line comment");
+}
+
+void sql_lexer_handles_comments_and_operators() {
+  const auto tokens = pageforge::lex_sql("/* a\n b */ a.b + 1 <= 2 != 3 > 0 = 1 < 4 *;\n-- done");
+  const std::vector<SqlTokenKind> expected{
+      SqlTokenKind::Identifier, SqlTokenKind::Dot, SqlTokenKind::Identifier,
+      SqlTokenKind::Plus, SqlTokenKind::Integer, SqlTokenKind::LessEqual,
+      SqlTokenKind::Integer, SqlTokenKind::NotEqual, SqlTokenKind::Integer,
+      SqlTokenKind::Greater, SqlTokenKind::Integer, SqlTokenKind::Equal,
+      SqlTokenKind::Integer, SqlTokenKind::Less, SqlTokenKind::Integer,
+      SqlTokenKind::Star, SqlTokenKind::Semicolon, SqlTokenKind::End};
+  std::vector<SqlTokenKind> actual;
+  for (const auto& token : tokens) actual.push_back(token.kind);
+  check(actual == expected, "SQL lexer should skip comments and recognize all supported symbols");
+  check(tokens[0].line == 2 && tokens[0].column == 7,
+        "block-comment newlines should update source positions");
+  check(tokens[7].text == "!=", "alternate inequality spelling should be preserved");
+  const auto string_tokens = pageforge::lex_sql("'' 'line\nnext'");
+  check(string_tokens[0].text.empty() && string_tokens[1].text == "line\nnext",
+        "empty and multiline strings should decode exactly");
+}
+
+void sql_lexer_rejects_malformed_input() {
+  const auto empty = pageforge::lex_sql("");
+  check(empty.size() == 1 && empty[0].kind == SqlTokenKind::End && empty[0].offset == 0,
+        "empty SQL should produce only an end token");
+  check_throws<SqlLexError>([&] { (void)pageforge::lex_sql("'unfinished"); },
+                            "unterminated string should fail");
+  check_throws<SqlLexError>([&] { (void)pageforge::lex_sql("/* unfinished"); },
+                            "unterminated block comment should fail");
+  check_throws<SqlLexError>([&] { (void)pageforge::lex_sql("SELECT ! value"); },
+                            "bare exclamation point should fail");
+  check_throws<SqlLexError>([&] { (void)pageforge::lex_sql(std::string("a\0b", 3)); },
+                            "NUL outside a string should fail");
+  try {
+    (void)pageforge::lex_sql(std::string("'a\0b'", 5));
+    throw std::runtime_error("NUL inside a string should have failed");
+  } catch (const SqlLexError& error) {
+    check(error.line() == 1 && error.column() == 3,
+          "NUL error should report the offending character, not just the string start");
+  }
+  try {
+    (void)pageforge::lex_sql("SELECT\n$bad");
+    throw std::runtime_error("invalid symbol should have raised a lexical error");
+  } catch (const SqlLexError& error) {
+    check(error.line() == 2 && error.column() == 1,
+          "lexical error should expose the offending source position");
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -793,6 +867,9 @@ int main() {
       {"typed table corruption detection", typed_tables_detect_corrupt_envelopes},
       {"query filter, projection, and limit", query_pipeline_filters_projects_and_limits},
       {"query validation and lazy limit", query_pipeline_validates_and_short_circuits},
+      {"SQL lexer tokens and positions", sql_lexer_recognizes_literals_and_positions},
+      {"SQL lexer comments and operators", sql_lexer_handles_comments_and_operators},
+      {"SQL lexer malformed input", sql_lexer_rejects_malformed_input},
   };
   std::size_t passed = 0;
   for (const auto& [name, test] : tests) {
