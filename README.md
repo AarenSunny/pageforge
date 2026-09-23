@@ -23,6 +23,7 @@ compaction, a durable heap file, a buffer manager, and typed catalog metadata.
 - Streaming record and typed-table cursors without materializing row sets
 - Lazy query operators for filtering, projection, and limits
 - Position-aware SQL lexer with literals, comparisons, and comments
+- Strict `SELECT` parser producing typed logical plans
 - Text-record CLI for a reproducible, persistent storage demo
 - Bounds, overlap, truncation, format, and page-position validation
 - Warning-clean C++20 build on macOS and Linux CI
@@ -62,7 +63,8 @@ contract, while [docs/CATALOG.md](docs/CATALOG.md) describes persisted table
 definitions. [docs/TABLE_STORE.md](docs/TABLE_STORE.md) shows the typed-table
 API and row envelope. [docs/QUERY_EXECUTION.md](docs/QUERY_EXECUTION.md)
 demonstrates the composable streaming query pipeline; [docs/SQL_LEXER.md](docs/SQL_LEXER.md)
-describes the SQL token stream being prepared for the parser.
+describes tokenization, and [docs/SQL_PARSER.md](docs/SQL_PARSER.md) defines the
+currently accepted `SELECT` grammar and logical plan.
 
 ## Architecture roadmap
 
@@ -76,7 +78,8 @@ describes the SQL token stream being prepared for the parser.
 - [x] Streaming record and typed-table scans
 - [x] Streaming filter, projection, and limit operators
 - [x] Position-aware SQL lexical analysis
-- [ ] SQL parser and logical plans
+- [x] `SELECT` parser and logical plans for projection, comparison, and limit
+- [ ] Bind SQL plans to catalog schemas and physical operators
 - [ ] Joins and aggregation
 - [ ] Write-ahead logging and crash recovery
 - [ ] Transactions, locking, and isolation

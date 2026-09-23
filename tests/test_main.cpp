@@ -20,6 +20,7 @@
 #include "pageforge/table_store.hpp"
 #include "pageforge/query.hpp"
 #include "pageforge/sql_lexer.hpp"
+#include "pageforge/sql_parser.hpp"
 
 namespace {
 
@@ -39,6 +40,7 @@ using pageforge::TableCorruption;
 using pageforge::Query;
 using pageforge::SqlLexError;
 using pageforge::SqlTokenKind;
+using pageforge::SqlParseError;
 
 std::vector<std::byte> bytes(std::string_view value) {
   const auto* begin = reinterpret_cast<const std::byte*>(value.data());
@@ -836,6 +838,77 @@ void sql_lexer_rejects_malformed_input() {
   }
 }
 
+void sql_parser_builds_select_plans() {
+  const auto plan = pageforge::parse_select(
+      "SeLeCt Name, age FROM People WHERE age >= -9223372036854775808 LIMIT 10;");
+  check(plan.table == "People" && !plan.select_all &&
+            plan.columns == std::vector<std::string>{"Name", "age"},
+        "parser should preserve identifier spelling and projection order");
+  check(plan.predicate && plan.predicate->column == "age" &&
+            plan.predicate->comparison == pageforge::SqlComparison::GreaterEqual &&
+            plan.predicate->literal == pageforge::SqlLiteral{std::numeric_limits<std::int64_t>::min()},
+        "parser should build a comparison with the minimum signed integer");
+  check(plan.limit == 10, "parser should record LIMIT");
+
+  const auto all = pageforge::parse_select("SELECT * FROM flags WHERE active = TRUE");
+  check(all.select_all && all.columns.empty() && all.predicate &&
+            all.predicate->literal == pageforge::SqlLiteral{true} && !all.limit,
+        "parser should support wildcard projection and boolean literals");
+
+  const auto string_plan = pageforge::parse_select(
+      "SELECT name FROM people WHERE name <> 'O''Neil' LIMIT 0");
+  check(string_plan.predicate && string_plan.predicate->comparison == pageforge::SqlComparison::NotEqual &&
+            string_plan.predicate->literal == pageforge::SqlLiteral{std::string("O'Neil")} &&
+            string_plan.limit == 0,
+        "parser should carry decoded string literals and zero limits into the plan");
+
+  const auto null_plan = pageforge::parse_select("SELECT note FROM people WHERE note = NULL;");
+  check(null_plan.predicate && std::holds_alternative<std::monostate>(null_plan.predicate->literal),
+        "parser should represent NULL distinctly");
+}
+
+void sql_parser_maps_comparisons_and_signs() {
+  const std::vector<std::pair<std::string, pageforge::SqlComparison>> comparisons{
+      {"=", pageforge::SqlComparison::Equal}, {"!=", pageforge::SqlComparison::NotEqual},
+      {"<>", pageforge::SqlComparison::NotEqual}, {"<", pageforge::SqlComparison::Less},
+      {"<=", pageforge::SqlComparison::LessEqual}, {">", pageforge::SqlComparison::Greater},
+      {">=", pageforge::SqlComparison::GreaterEqual}};
+  for (const auto& [symbol, expected] : comparisons) {
+    const auto plan = pageforge::parse_select("SELECT x FROM t WHERE x " + symbol + " +42");
+    check(plan.predicate && plan.predicate->comparison == expected &&
+              plan.predicate->literal == pageforge::SqlLiteral{std::int64_t{42}},
+          "parser should map every comparison and explicit positive sign");
+  }
+  const auto false_plan = pageforge::parse_select("SELECT x FROM t WHERE x = false;");
+  check(false_plan.predicate && false_plan.predicate->literal == pageforge::SqlLiteral{false},
+        "boolean keywords should be case-insensitive");
+}
+
+void sql_parser_rejects_invalid_statements() {
+  const std::vector<std::string> invalid{
+      "", "DELETE FROM people", "SELECT FROM people", "SELECT a, FROM people",
+      "SELECT * people", "SELECT * FROM", "SELECT * FROM t WHERE x",
+      "SELECT * FROM t WHERE x AND 1", "SELECT * FROM t WHERE x = unknown",
+      "SELECT * FROM t LIMIT -1", "SELECT * FROM t LIMIT",
+      "SELECT * FROM t LIMIT 99999999999999999999999999999999999999",
+      "SELECT * FROM t WHERE x = 9223372036854775808",
+      "SELECT * FROM t WHERE x = -9223372036854775809",
+      "SELECT * FROM t; SELECT * FROM u", "SELECT * FROM t;;",
+      "SELECT * FROM t LIMIT 1 WHERE x = 2"};
+  for (const auto& sql : invalid) {
+    check_throws<SqlParseError>([&] { (void)pageforge::parse_select(sql); },
+                                "invalid SELECT syntax should fail");
+  }
+
+  try {
+    (void)pageforge::parse_select("SELECT x\nFROM t\nWHERE x");
+    throw std::runtime_error("missing comparison should have failed");
+  } catch (const SqlParseError& error) {
+    check(error.line() == 3 && error.column() == 8,
+          "parse errors should retain the current token's line and column");
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -870,6 +943,9 @@ int main() {
       {"SQL lexer tokens and positions", sql_lexer_recognizes_literals_and_positions},
       {"SQL lexer comments and operators", sql_lexer_handles_comments_and_operators},
       {"SQL lexer malformed input", sql_lexer_rejects_malformed_input},
+      {"SQL parser SELECT plans", sql_parser_builds_select_plans},
+      {"SQL parser comparisons and signs", sql_parser_maps_comparisons_and_signs},
+      {"SQL parser invalid statements", sql_parser_rejects_invalid_statements},
   };
   std::size_t passed = 0;
   for (const auto& [name, test] : tests) {
