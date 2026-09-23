@@ -21,6 +21,7 @@
 #include "pageforge/query.hpp"
 #include "pageforge/sql_lexer.hpp"
 #include "pageforge/sql_parser.hpp"
+#include "pageforge/sql_executor.hpp"
 
 namespace {
 
@@ -41,6 +42,7 @@ using pageforge::Query;
 using pageforge::SqlLexError;
 using pageforge::SqlTokenKind;
 using pageforge::SqlParseError;
+using pageforge::SqlBindError;
 
 std::vector<std::byte> bytes(std::string_view value) {
   const auto* begin = reinterpret_cast<const std::byte*>(value.data());
@@ -909,6 +911,106 @@ void sql_parser_rejects_invalid_statements() {
   }
 }
 
+void sql_execution_binds_and_streams_results() {
+  const auto path = std::filesystem::temp_directory_path() / "pageforge-sql-execution-test.db";
+  std::filesystem::remove(path);
+  {
+    auto heap = HeapFile::create(path);
+    BufferPool pool(heap, 1);
+    RecordStore records(pool);
+    Catalog catalog(records);
+    (void)catalog.create_table({"People", people_schema(), 1});
+    TableStore tables(records, catalog);
+    const auto ada_id = tables.insert("People", {std::int64_t{1}, std::string("Ada"), true,
+                                                 std::monostate{}});
+    (void)tables.insert("People", {std::int64_t{2}, std::string("Bob"), false,
+                                   std::string("analyst")});
+    (void)tables.insert("People", {std::int64_t{3}, std::string("Grace"), true,
+                                   std::string("pioneer")});
+
+    auto selected = pageforge::execute_select_sql(
+        tables, catalog, "SELECT NAME, id, name FROM people WHERE ACTIVE = TRUE LIMIT 1;");
+    check(selected.output_schema() == pageforge::Schema{{"name", pageforge::DataType::Text, false},
+                                                        {"id", pageforge::DataType::Integer, false},
+                                                        {"name", pageforge::DataType::Text, false}},
+          "binding should resolve identifiers case-insensitively and preserve catalog metadata");
+    const auto row = selected.next();
+    check(row && row->id == ada_id &&
+              row->values == pageforge::Tuple{std::string("Ada"), std::int64_t{1}, std::string("Ada")} &&
+              !selected.next(),
+          "SQL should execute filter, repeated projection, and limit lazily");
+
+    auto names = pageforge::execute_select_sql(
+        tables, catalog, "SELECT name FROM People WHERE name > 'Bob'");
+    const auto grace = names.next();
+    check(grace && grace->values == pageforge::Tuple{std::string("Grace")} && !names.next(),
+          "text comparisons should use stable bytewise ordering");
+
+    auto integers = pageforge::execute_select_sql(
+        tables, catalog, "SELECT id FROM People WHERE id >= 2");
+    const auto two = integers.next();
+    const auto three = integers.next();
+    check(two && two->values == pageforge::Tuple{std::int64_t{2}} &&
+              three && three->values == pageforge::Tuple{std::int64_t{3}} && !integers.next(),
+          "integer comparisons should stream all matching rows in record order");
+
+    auto null_comparison = pageforge::execute_select_sql(
+        tables, catalog, "SELECT * FROM People WHERE note = NULL");
+    check(null_comparison.output_schema() == people_schema() && !null_comparison.next(),
+          "NULL comparison should evaluate as unknown and be removed by WHERE");
+
+    auto non_null = pageforge::execute_select_sql(
+        tables, catalog, "SELECT name FROM People WHERE note != 'analyst'");
+    const auto non_null_row = non_null.next();
+    check(non_null_row && non_null_row->values == pageforge::Tuple{std::string("Grace")} && !non_null.next(),
+          "nullable column comparisons should skip null rows and compare non-null values");
+  }
+  std::filesystem::remove(path);
+}
+
+void sql_execution_rejects_binding_errors() {
+  const auto path = std::filesystem::temp_directory_path() / "pageforge-sql-binding-test.db";
+  std::filesystem::remove(path);
+  {
+    auto heap = HeapFile::create(path);
+    BufferPool pool(heap, 2);
+    RecordStore records(pool);
+    Catalog catalog(records);
+    (void)catalog.create_table({"people", people_schema(), 1});
+    (void)catalog.create_table({"Things", {{"id", pageforge::DataType::Integer, false}}, 1});
+    (void)catalog.create_table({"things", {{"id", pageforge::DataType::Integer, false}}, 1});
+    (void)catalog.create_table({"ambiguous", {{"Name", pageforge::DataType::Text, false},
+                                              {"name", pageforge::DataType::Text, false}}, 1});
+    TableStore tables(records, catalog);
+
+    const std::vector<std::string> invalid{
+        "SELECT * FROM missing",
+        "SELECT missing FROM people",
+        "SELECT * FROM people WHERE missing = 1",
+        "SELECT * FROM people WHERE id = 'wrong'",
+        "SELECT * FROM people WHERE name = 7",
+        "SELECT * FROM people WHERE active > TRUE",
+        "SELECT * FROM THINGS",
+        "SELECT NAME FROM ambiguous"};
+    for (const auto& sql : invalid) {
+      check_throws<SqlBindError>([&] { (void)pageforge::execute_select_sql(tables, catalog, sql); },
+                                 "invalid SQL names or types should fail during binding");
+    }
+
+    check_throws<SqlParseError>(
+        [&] { (void)pageforge::execute_select_sql(tables, catalog, "SELECT FROM people"); },
+        "execution entry point should preserve parse errors");
+    pageforge::SelectPlan malformed;
+    malformed.table = "people";
+    check_throws<SqlBindError>([&] { (void)pageforge::bind_select(tables, catalog, malformed); },
+                               "binder should reject malformed hand-built logical plans");
+    auto zero = pageforge::execute_select_sql(tables, catalog, "SELECT * FROM people LIMIT 0");
+    check(zero.output_schema() == people_schema() && !zero.next(),
+          "bound LIMIT zero should retain output metadata without scanning rows");
+  }
+  std::filesystem::remove(path);
+}
+
 }  // namespace
 
 int main() {
@@ -946,6 +1048,8 @@ int main() {
       {"SQL parser SELECT plans", sql_parser_builds_select_plans},
       {"SQL parser comparisons and signs", sql_parser_maps_comparisons_and_signs},
       {"SQL parser invalid statements", sql_parser_rejects_invalid_statements},
+      {"SQL binding and execution", sql_execution_binds_and_streams_results},
+      {"SQL binding validation", sql_execution_rejects_binding_errors},
   };
   std::size_t passed = 0;
   for (const auto& [name, test] : tests) {

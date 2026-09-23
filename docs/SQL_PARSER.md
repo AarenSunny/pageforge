@@ -27,9 +27,8 @@ minimum value, and `LIMIT` is checked against the platform's `size_t` range.
 Syntax failures throw `SqlParseError` with a one-based line and column. Lexical
 failures remain `SqlLexError` so callers can distinguish the phase.
 
-The parser produces a logical description only. It does not yet resolve table
-or column names against the catalog or translate the predicate into the
-streaming query operators. Multiple predicates, `AND`/`OR`, aliases, ordering,
-joins, aggregation, expressions, and other statement types are rejected rather
-than partially interpreted. SQL remains unavailable from the CLI until binding
-and execution are wired end to end.
+The SQL executor now resolves this logical description against the catalog and
+translates it into streaming query operators. Multiple predicates, `AND`/`OR`,
+aliases, ordering, joins, aggregation, expressions, and other statement types
+are rejected rather than partially interpreted. SQL remains unavailable from
+the CLI until a shell command and output formatter are added.
