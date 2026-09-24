@@ -59,6 +59,10 @@ grace=$("$cli" "$database" insert People 3 Grace true pioneer)
   "$(printf 'name\tid\nAda\t1\nGrace\t3')" ]
 [ "$("$cli" "$database" query "SELECT note FROM People WHERE id >= 1 LIMIT 2")" = \
   "$(printf 'note\nNULL\nanalyst')" ]
+[ "$("$cli" "$database" query "SELECT name FROM People WHERE active = TRUE AND note IS NULL")" = \
+  "$(printf 'name\nAda')" ]
+[ "$("$cli" "$database" query "SELECT name FROM People WHERE note IS NOT NULL AND id >= 3")" = \
+  "$(printf 'name\nGrace')" ]
 [ "$("$cli" "$database" query "SELECT * FROM people LIMIT 0")" = \
   "$(printf 'id\tname\tactive\tnote')" ]
 special=$(printf 'Tab\tName\\Path')
@@ -89,4 +93,4 @@ if "$cli" "$database" query "SELECT missing FROM people" >/dev/null 2>&1; then
   echo "query with unknown column was accepted" >&2
   exit 1
 fi
-echo "PASS  CLI raw records, typed tables, SQL queries, and validation"
+echo "PASS  CLI raw records, typed tables, conjunctive SQL queries, and validation"

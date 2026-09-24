@@ -23,8 +23,8 @@ compaction, a durable heap file, a buffer manager, and typed catalog metadata.
 - Streaming record and typed-table cursors without materializing row sets
 - Lazy query operators for filtering, projection, and limits
 - Position-aware SQL lexer with literals, comparisons, and comments
-- Strict `SELECT` parser producing typed logical plans
-- Catalog-bound SQL execution over the streaming query pipeline
+- Strict `SELECT` parser with conjunctive predicates and explicit null tests
+- Catalog-bound SQL execution over successive streaming filters
 - CLI for typed table creation, validated inserts, and streaming SQL queries
 - Bounds, overlap, truncation, format, and page-position validation
 - Warning-clean C++20 build on macOS and Linux CI
@@ -47,7 +47,7 @@ make
 ./build/pageforge demo.db insert people 2 "Grace Hopper" true compiler
 ./build/pageforge demo.db insert people 3 Bob false analyst
 ./build/pageforge demo.db query \
-  "SELECT name, id FROM people WHERE active = TRUE LIMIT 10;"
+  "SELECT name, id FROM people WHERE active = TRUE AND note IS NOT NULL LIMIT 10;"
 ```
 
 Each command starts a new process and reopens the same database. `init` refuses
@@ -83,7 +83,7 @@ documents binding and end-to-end execution.
 - [x] Streaming record and typed-table scans
 - [x] Streaming filter, projection, and limit operators
 - [x] Position-aware SQL lexical analysis
-- [x] `SELECT` parser and logical plans for projection, comparison, and limit
+- [x] `SELECT` plans for projection, comparisons, `AND`, null tests, and limit
 - [x] Catalog binding and streaming execution for supported `SELECT` plans
 - [ ] Joins and aggregation
 - [ ] Write-ahead logging and crash recovery

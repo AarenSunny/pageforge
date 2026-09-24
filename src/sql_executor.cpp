@@ -67,6 +67,12 @@ bool compare(const Type& left, const Type& right, SqlComparison comparison) {
 
 RowPredicate bind_predicate(const Schema& schema, const SqlPredicate& predicate) {
   const auto column_index = resolve_column(schema, predicate.column);
+  if (predicate.kind != SqlPredicateKind::Comparison) {
+    const bool expect_null = predicate.kind == SqlPredicateKind::IsNull;
+    return [column_index, expect_null](const TableRow& row) {
+      return std::holds_alternative<std::monostate>(row.values[column_index]) == expect_null;
+    };
+  }
   const auto type = schema[column_index].type;
   if (!literal_matches(type, predicate.literal)) {
     throw SqlBindError("literal type does not match column: " + predicate.column);
@@ -104,7 +110,9 @@ BoundSelect bind_select(TableStore& tables, Catalog& catalog, const SelectPlan& 
   }
   const auto table = resolve_table(catalog, plan.table);
   auto query = Query::from(tables, table.name);
-  if (plan.predicate) query.filter(bind_predicate(table.schema, *plan.predicate));
+  for (const auto& predicate : plan.predicates) {
+    query.filter(bind_predicate(table.schema, predicate));
+  }
 
   Schema output_schema;
   if (plan.select_all) {

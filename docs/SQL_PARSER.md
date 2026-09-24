@@ -1,8 +1,8 @@
 # SQL `SELECT` parser
 
 `parse_select(source)` lexes one statement and returns a `SelectPlan`. The plan
-records its table, wildcard or ordered projection columns, optional comparison
-predicate, and optional row limit.
+records its table, wildcard or ordered projection columns, ordered predicates,
+and optional row limit.
 
 ```cpp
 auto plan = pageforge::parse_select(
@@ -14,8 +14,11 @@ The accepted grammar is intentionally narrow:
 ```text
 select     := SELECT ("*" | identifier ("," identifier)*)
               FROM identifier
-              (WHERE identifier comparison literal)?
+              (WHERE predicate (AND predicate)*)?
               (LIMIT unsigned_integer)? ";"? EOF
+predicate  := identifier comparison literal
+            | identifier IS NULL
+            | identifier IS NOT NULL
 comparison := "=" | "!=" | "<>" | "<" | "<=" | ">" | ">="
 literal    := ("+" | "-")? integer | string | TRUE | FALSE | NULL
 ```
@@ -27,8 +30,8 @@ minimum value, and `LIMIT` is checked against the platform's `size_t` range.
 Syntax failures throw `SqlParseError` with a one-based line and column. Lexical
 failures remain `SqlLexError` so callers can distinguish the phase.
 
-The SQL executor now resolves this logical description against the catalog and
-translates it into streaming query operators. Multiple predicates, `AND`/`OR`,
+The SQL executor resolves this logical description against the catalog and
+translates every `AND` term into a streaming filter. `OR`, parentheses,
 aliases, ordering, joins, aggregation, expressions, and other statement types
-are rejected rather than partially interpreted. SQL remains unavailable from
-the CLI until a shell command and output formatter are added.
+are rejected rather than partially interpreted. The CLI exposes supported
+statements through its `query` command.

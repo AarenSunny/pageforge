@@ -846,27 +846,45 @@ void sql_parser_builds_select_plans() {
   check(plan.table == "People" && !plan.select_all &&
             plan.columns == std::vector<std::string>{"Name", "age"},
         "parser should preserve identifier spelling and projection order");
-  check(plan.predicate && plan.predicate->column == "age" &&
-            plan.predicate->comparison == pageforge::SqlComparison::GreaterEqual &&
-            plan.predicate->literal == pageforge::SqlLiteral{std::numeric_limits<std::int64_t>::min()},
+  check(plan.predicates.size() == 1 && plan.predicates[0].column == "age" &&
+            plan.predicates[0].comparison == pageforge::SqlComparison::GreaterEqual &&
+            plan.predicates[0].literal ==
+                pageforge::SqlLiteral{std::numeric_limits<std::int64_t>::min()},
         "parser should build a comparison with the minimum signed integer");
   check(plan.limit == 10, "parser should record LIMIT");
 
   const auto all = pageforge::parse_select("SELECT * FROM flags WHERE active = TRUE");
-  check(all.select_all && all.columns.empty() && all.predicate &&
-            all.predicate->literal == pageforge::SqlLiteral{true} && !all.limit,
+  check(all.select_all && all.columns.empty() && all.predicates.size() == 1 &&
+            all.predicates[0].literal == pageforge::SqlLiteral{true} && !all.limit,
         "parser should support wildcard projection and boolean literals");
 
   const auto string_plan = pageforge::parse_select(
       "SELECT name FROM people WHERE name <> 'O''Neil' LIMIT 0");
-  check(string_plan.predicate && string_plan.predicate->comparison == pageforge::SqlComparison::NotEqual &&
-            string_plan.predicate->literal == pageforge::SqlLiteral{std::string("O'Neil")} &&
+  check(string_plan.predicates.size() == 1 &&
+            string_plan.predicates[0].comparison == pageforge::SqlComparison::NotEqual &&
+            string_plan.predicates[0].literal == pageforge::SqlLiteral{std::string("O'Neil")} &&
             string_plan.limit == 0,
         "parser should carry decoded string literals and zero limits into the plan");
 
   const auto null_plan = pageforge::parse_select("SELECT note FROM people WHERE note = NULL;");
-  check(null_plan.predicate && std::holds_alternative<std::monostate>(null_plan.predicate->literal),
+  check(null_plan.predicates.size() == 1 &&
+            std::holds_alternative<std::monostate>(null_plan.predicates[0].literal),
         "parser should represent NULL distinctly");
+
+  const auto conjunction = pageforge::parse_select(
+      "SELECT name FROM people WHERE active = TRUE AND note IS NOT NULL AND id >= 2;");
+  check(conjunction.predicates.size() == 3 &&
+            conjunction.predicates[0].kind == pageforge::SqlPredicateKind::Comparison &&
+            conjunction.predicates[1].column == "note" &&
+            conjunction.predicates[1].kind == pageforge::SqlPredicateKind::IsNotNull &&
+            conjunction.predicates[2].column == "id" &&
+            conjunction.predicates[2].comparison == pageforge::SqlComparison::GreaterEqual,
+        "parser should retain ordered AND predicates and null tests");
+
+  const auto null_test = pageforge::parse_select("SELECT * FROM people WHERE note IS NULL");
+  check(null_test.predicates.size() == 1 &&
+            null_test.predicates[0].kind == pageforge::SqlPredicateKind::IsNull,
+        "parser should represent IS NULL separately from comparison with NULL");
 }
 
 void sql_parser_maps_comparisons_and_signs() {
@@ -877,12 +895,13 @@ void sql_parser_maps_comparisons_and_signs() {
       {">=", pageforge::SqlComparison::GreaterEqual}};
   for (const auto& [symbol, expected] : comparisons) {
     const auto plan = pageforge::parse_select("SELECT x FROM t WHERE x " + symbol + " +42");
-    check(plan.predicate && plan.predicate->comparison == expected &&
-              plan.predicate->literal == pageforge::SqlLiteral{std::int64_t{42}},
+    check(plan.predicates.size() == 1 && plan.predicates[0].comparison == expected &&
+              plan.predicates[0].literal == pageforge::SqlLiteral{std::int64_t{42}},
           "parser should map every comparison and explicit positive sign");
   }
   const auto false_plan = pageforge::parse_select("SELECT x FROM t WHERE x = false;");
-  check(false_plan.predicate && false_plan.predicate->literal == pageforge::SqlLiteral{false},
+  check(false_plan.predicates.size() == 1 &&
+            false_plan.predicates[0].literal == pageforge::SqlLiteral{false},
         "boolean keywords should be case-insensitive");
 }
 
@@ -896,7 +915,9 @@ void sql_parser_rejects_invalid_statements() {
       "SELECT * FROM t WHERE x = 9223372036854775808",
       "SELECT * FROM t WHERE x = -9223372036854775809",
       "SELECT * FROM t; SELECT * FROM u", "SELECT * FROM t;;",
-      "SELECT * FROM t LIMIT 1 WHERE x = 2"};
+      "SELECT * FROM t LIMIT 1 WHERE x = 2", "SELECT * FROM t WHERE x IS",
+      "SELECT * FROM t WHERE x IS FALSE", "SELECT * FROM t WHERE x = 1 AND",
+      "SELECT * FROM t WHERE x = 1 OR x = 2"};
   for (const auto& sql : invalid) {
     check_throws<SqlParseError>([&] { (void)pageforge::parse_select(sql); },
                                 "invalid SELECT syntax should fail");
@@ -964,6 +985,20 @@ void sql_execution_binds_and_streams_results() {
     const auto non_null_row = non_null.next();
     check(non_null_row && non_null_row->values == pageforge::Tuple{std::string("Grace")} && !non_null.next(),
           "nullable column comparisons should skip null rows and compare non-null values");
+
+    auto null_rows = pageforge::execute_select_sql(
+        tables, catalog, "SELECT name FROM People WHERE active = TRUE AND note IS NULL");
+    const auto ada = null_rows.next();
+    check(ada && ada->values == pageforge::Tuple{std::string("Ada")} && !null_rows.next(),
+          "AND filters and IS NULL should stream only rows satisfying every predicate");
+
+    auto present_notes = pageforge::execute_select_sql(
+        tables, catalog, "SELECT name FROM People WHERE note IS NOT NULL AND id >= 3");
+    const auto grace_with_note = present_notes.next();
+    check(grace_with_note &&
+              grace_with_note->values == pageforge::Tuple{std::string("Grace")} &&
+              !present_notes.next(),
+          "IS NOT NULL should compose with typed comparisons");
   }
   std::filesystem::remove(path);
 }
@@ -990,6 +1025,7 @@ void sql_execution_rejects_binding_errors() {
         "SELECT * FROM people WHERE id = 'wrong'",
         "SELECT * FROM people WHERE name = 7",
         "SELECT * FROM people WHERE active > TRUE",
+        "SELECT * FROM people WHERE id >= 1 AND missing IS NULL",
         "SELECT * FROM THINGS",
         "SELECT NAME FROM ambiguous"};
     for (const auto& sql : invalid) {

@@ -37,7 +37,10 @@ class Parser {
 
     expect_keyword("FROM");
     plan.table = expect_identifier("expected a table name after FROM");
-    if (match_keyword("WHERE")) plan.predicate = parse_predicate();
+    if (match_keyword("WHERE")) {
+      plan.predicates.push_back(parse_predicate());
+      while (match_keyword("AND")) plan.predicates.push_back(parse_predicate());
+    }
     if (match_keyword("LIMIT")) plan.limit = parse_limit();
     (void)match(SqlTokenKind::Semicolon);
     if (current().kind != SqlTokenKind::End) fail(current(), "unexpected token after SELECT statement");
@@ -71,6 +74,13 @@ class Parser {
   SqlPredicate parse_predicate() {
     SqlPredicate predicate;
     predicate.column = expect_identifier("expected a column after WHERE");
+    if (match_keyword("IS")) {
+      const bool negated = match_keyword("NOT");
+      expect_keyword("NULL");
+      predicate.kind = negated ? SqlPredicateKind::IsNotNull : SqlPredicateKind::IsNull;
+      predicate.literal = std::monostate{};
+      return predicate;
+    }
     predicate.comparison = parse_comparison();
     predicate.literal = parse_literal();
     return predicate;
