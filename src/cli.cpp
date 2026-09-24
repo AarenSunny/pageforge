@@ -4,22 +4,61 @@
 #include <filesystem>
 #include <iostream>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <variant>
 #include <vector>
 
 #include "pageforge/record_store.hpp"
+#include "pageforge/sql_executor.hpp"
 
 namespace {
 
 void usage() {
-  std::cerr << "Usage: pageforge <database> <command> [argument]\n"
-               "  init             Create a database; refuse an existing path\n"
-               "  put <text>       Insert a nonempty text record\n"
-               "  get <page:slot>  Read a record\n"
-               "  erase <page:slot> Delete a record\n"
-               "  list             List live records\n";
+  std::cerr << "Usage: pageforge <database> <command> [arguments]\n"
+               "  init                              Create a new database\n"
+               "  create-table <table> <name:type>... Create a typed table\n"
+               "  insert <table> <value>...          Insert a typed row\n"
+               "  query <select-sql>                 Execute a SELECT statement\n"
+               "  put <text>                          Insert a raw text record\n"
+               "  get <page:slot>                     Read a raw record\n"
+               "  erase <page:slot>                   Delete a raw record\n"
+               "  list                                List all raw records\n"
+               "Types: int, text, bool; add ? for nullable (for example text?).\n";
+}
+
+char ascii_lower(char value) {
+  return value >= 'A' && value <= 'Z' ? static_cast<char>(value + ('a' - 'A')) : value;
+}
+
+bool equal_name(std::string_view left, std::string_view right) {
+  if (left.size() != right.size()) return false;
+  for (std::size_t index = 0; index < left.size(); ++index) {
+    if (ascii_lower(left[index]) != ascii_lower(right[index])) return false;
+  }
+  return true;
+}
+
+bool is_sql_identifier(std::string_view value) {
+  if (value.empty()) return false;
+  const auto letter = [](char character) {
+    return (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
+           character == '_';
+  };
+  if (!letter(value.front())) return false;
+  for (const auto character : value.substr(1)) {
+    if (!letter(character) && (character < '0' || character > '9')) return false;
+  }
+  return true;
+}
+
+std::string lowercase(std::string_view value) {
+  std::string result(value);
+  for (auto& character : result) character = ascii_lower(character);
+  return result;
 }
 
 template <typename Integer>
@@ -55,6 +94,110 @@ std::vector<std::byte> as_bytes(std::string_view text) {
   return result;
 }
 
+pageforge::Column parse_column(std::string_view specification) {
+  const auto separator = specification.find(':');
+  if (separator == std::string_view::npos || specification.find(':', separator + 1) != std::string_view::npos) {
+    throw std::invalid_argument("column must use name:type syntax");
+  }
+  const auto name = specification.substr(0, separator);
+  if (!is_sql_identifier(name)) throw std::invalid_argument("column name is not a SQL identifier");
+  auto type_name = lowercase(specification.substr(separator + 1));
+  bool nullable = false;
+  if (!type_name.empty() && type_name.back() == '?') {
+    nullable = true;
+    type_name.pop_back();
+  }
+  pageforge::DataType type;
+  if (type_name == "int" || type_name == "integer") {
+    type = pageforge::DataType::Integer;
+  } else if (type_name == "text") {
+    type = pageforge::DataType::Text;
+  } else if (type_name == "bool" || type_name == "boolean") {
+    type = pageforge::DataType::Boolean;
+  } else {
+    throw std::invalid_argument("unknown column type: " + type_name);
+  }
+  return {std::string(name), type, nullable};
+}
+
+pageforge::TableDefinition resolve_table(pageforge::Catalog& catalog, std::string_view name) {
+  std::optional<pageforge::TableDefinition> found;
+  for (const auto& table : catalog.list_tables()) {
+    if (!equal_name(table.name, name)) continue;
+    if (found) throw std::invalid_argument("ambiguous table name");
+    found = table;
+  }
+  if (!found) throw std::out_of_range("table not found");
+  return std::move(*found);
+}
+
+pageforge::Value parse_value(const pageforge::Column& column, std::string_view input) {
+  if (input == "NULL") {
+    if (!column.nullable) throw std::invalid_argument("NULL supplied for non-nullable column: " + column.name);
+    return std::monostate{};
+  }
+  switch (column.type) {
+    case pageforge::DataType::Integer: {
+      std::int64_t value = 0;
+      const bool explicit_plus = !input.empty() && input.front() == '+';
+      const auto digits = explicit_plus ? input.substr(1) : input;
+      const auto [end, error] = std::from_chars(digits.data(), digits.data() + digits.size(), value);
+      if (digits.empty() || error != std::errc{} || end != digits.data() + digits.size()) {
+        throw std::invalid_argument("invalid integer for column: " + column.name);
+      }
+      return value;
+    }
+    case pageforge::DataType::Text:
+      return std::string(input);
+    case pageforge::DataType::Boolean: {
+      const auto value = lowercase(input);
+      if (value == "true") return true;
+      if (value == "false") return false;
+      throw std::invalid_argument("invalid boolean for column: " + column.name);
+    }
+  }
+  throw std::invalid_argument("unknown column type");
+}
+
+void print_escaped(std::string_view value) {
+  for (const auto character : value) {
+    switch (character) {
+      case '\\': std::cout << "\\\\"; break;
+      case '\t': std::cout << "\\t"; break;
+      case '\n': std::cout << "\\n"; break;
+      case '\r': std::cout << "\\r"; break;
+      default: std::cout << character; break;
+    }
+  }
+}
+
+void print_value(const pageforge::Value& value) {
+  if (std::holds_alternative<std::monostate>(value)) {
+    std::cout << "NULL";
+  } else if (std::holds_alternative<std::int64_t>(value)) {
+    std::cout << std::get<std::int64_t>(value);
+  } else if (std::holds_alternative<std::string>(value)) {
+    print_escaped(std::get<std::string>(value));
+  } else {
+    std::cout << (std::get<bool>(value) ? "true" : "false");
+  }
+}
+
+void print_query(pageforge::BoundSelect result) {
+  for (std::size_t index = 0; index < result.output_schema().size(); ++index) {
+    if (index != 0) std::cout << '\t';
+    print_escaped(result.output_schema()[index].name);
+  }
+  std::cout << '\n';
+  while (auto row = result.next()) {
+    for (std::size_t index = 0; index < row->values.size(); ++index) {
+      if (index != 0) std::cout << '\t';
+      print_value(row->values[index]);
+    }
+    std::cout << '\n';
+  }
+}
+
 int run(int argc, char* argv[]) {
   if (argc < 3) {
     usage();
@@ -73,12 +216,11 @@ int run(int argc, char* argv[]) {
     return 0;
   }
 
-  const bool needs_argument = command == "put" || command == "get" || command == "erase";
-  if (argc != (needs_argument ? 4 : 3)) {
-    usage();
-    return 2;
-  }
-  if (command != "put" && command != "get" && command != "erase" && command != "list") {
+  const bool one_argument = command == "put" || command == "get" || command == "erase" || command == "query";
+  const bool no_argument = command == "list";
+  const bool variable_arguments = command == "create-table" || command == "insert";
+  if ((!one_argument && !no_argument && !variable_arguments) || (one_argument && argc != 4) ||
+      (no_argument && argc != 3) || (variable_arguments && argc < 5)) {
     usage();
     return 2;
   }
@@ -86,6 +228,8 @@ int run(int argc, char* argv[]) {
   auto heap = pageforge::HeapFile::open(path);
   pageforge::BufferPool pool(heap, 16);
   pageforge::RecordStore records(pool);
+  pageforge::Catalog catalog(records);
+  pageforge::TableStore tables(records, catalog);
   if (command == "put") {
     const auto payload = as_bytes(argv[3]);
     const auto id = records.insert(payload);
@@ -102,13 +246,48 @@ int run(int argc, char* argv[]) {
     std::cout << "deleted ";
     print_id(id);
     std::cout << '\n';
-  } else {
+  } else if (command == "list") {
     for (const auto& record : records.scan()) {
       print_id(record.id);
       std::cout << '\t';
       print_bytes(record.bytes);
       std::cout << '\n';
     }
+  } else if (command == "create-table") {
+    const std::string_view table_name(argv[3]);
+    if (!is_sql_identifier(table_name)) throw std::invalid_argument("table name is not a SQL identifier");
+    for (const auto& table : catalog.list_tables()) {
+      if (equal_name(table.name, table_name)) throw std::invalid_argument("table already exists");
+    }
+    pageforge::Schema schema;
+    for (int index = 4; index < argc; ++index) {
+      auto column = parse_column(argv[index]);
+      for (const auto& existing : schema) {
+        if (equal_name(existing.name, column.name)) {
+          throw std::invalid_argument("column names must be unique case-insensitively");
+        }
+      }
+      schema.push_back(std::move(column));
+    }
+    (void)catalog.create_table({std::string(table_name), std::move(schema), 1});
+    pool.flush_all();
+    std::cout << "created table " << table_name << '\n';
+  } else if (command == "insert") {
+    const auto table = resolve_table(catalog, argv[3]);
+    if (static_cast<std::size_t>(argc - 4) != table.schema.size()) {
+      throw std::invalid_argument("insert value count does not match table schema");
+    }
+    pageforge::Tuple tuple;
+    tuple.reserve(table.schema.size());
+    for (std::size_t index = 0; index < table.schema.size(); ++index) {
+      tuple.push_back(parse_value(table.schema[index], argv[static_cast<int>(index) + 4]));
+    }
+    const auto id = tables.insert(table.name, tuple);
+    pool.flush_all();
+    print_id(id);
+    std::cout << '\n';
+  } else {
+    print_query(pageforge::execute_select_sql(tables, catalog, argv[3]));
   }
   return 0;
 }

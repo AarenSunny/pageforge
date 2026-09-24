@@ -32,5 +32,5 @@ wildcard query that returns the entire table schema even when `LIMIT 0` yields
 no rows.
 
 Execution remains single-threaded and inherits the underlying cursor's
-non-snapshot behavior. The library API is end to end, but the text-record CLI
-does not yet expose SQL or format result sets.
+non-snapshot behavior. The CLI exposes this path through its `query` command and
+formats the result as escaped, tab-separated text.

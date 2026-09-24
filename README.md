@@ -25,7 +25,7 @@ compaction, a durable heap file, a buffer manager, and typed catalog metadata.
 - Position-aware SQL lexer with literals, comparisons, and comments
 - Strict `SELECT` parser producing typed logical plans
 - Catalog-bound SQL execution over the streaming query pipeline
-- Text-record CLI for a reproducible, persistent storage demo
+- CLI for typed table creation, validated inserts, and streaming SQL queries
 - Bounds, overlap, truncation, format, and page-position validation
 - Warning-clean C++20 build on macOS and Linux CI
 
@@ -42,18 +42,21 @@ make check
 ```bash
 make
 ./build/pageforge demo.db init
-./build/pageforge demo.db put "hello, PageForge"  # prints 0:0
-./build/pageforge demo.db put "another row"       # prints 0:1
-./build/pageforge demo.db list
-./build/pageforge demo.db get 0:0
-./build/pageforge demo.db erase 0:1
-./build/pageforge demo.db list
+./build/pageforge demo.db create-table people id:int name:text active:bool note:text?
+./build/pageforge demo.db insert people 1 Ada true NULL
+./build/pageforge demo.db insert people 2 "Grace Hopper" true compiler
+./build/pageforge demo.db insert people 3 Bob false analyst
+./build/pageforge demo.db query \
+  "SELECT name, id FROM people WHERE active = TRUE LIMIT 10;"
 ```
 
 Each command starts a new process and reopens the same database. `init` refuses
-an existing path. The CLI treats payloads as text and prints record IDs as
-`page:slot`; the library itself stores arbitrary bytes. This is a storage-engine
-demo, not a SQL interface. Use a disposable path if you want to start over.
+an existing path. `create-table` accepts `int`, `text`, and `bool` columns, with
+`?` marking nullable columns. `insert` parses values from the stored schema and
+uses uppercase `NULL` for null. `query` prints an escaped, tab-separated result.
+Low-level `put`, `get`, `erase`, and `list` commands remain available for raw
+record inspection. See [docs/CLI.md](docs/CLI.md) for the complete command and
+output contract. Use a disposable path if you want to start over.
 
 The test suite writes only temporary heap files and removes them afterward. See
 [docs/STORAGE_FORMAT.md](docs/STORAGE_FORMAT.md) for byte layouts and validation
@@ -85,8 +88,8 @@ documents binding and end-to-end execution.
 - [ ] Joins and aggregation
 - [ ] Write-ahead logging and crash recovery
 - [ ] Transactions, locking, and isolation
-- [x] Persistent text-record CLI and end-to-end smoke test
-- [ ] Interactive SQL shell, benchmarks, Docker image, and demo database
+- [x] Typed table and SQL CLI with end-to-end smoke test
+- [ ] Interactive shell, benchmarks, Docker image, and demo database
 
 Unchecked items are planned milestones rather than current claims.
 
