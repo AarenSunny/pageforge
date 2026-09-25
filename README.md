@@ -25,7 +25,7 @@ compaction, a durable heap file, a buffer manager, and typed catalog metadata.
 - Position-aware SQL lexer with literals, comparisons, and comments
 - Strict `SELECT` parser with conjunctive predicates and explicit null tests
 - Catalog-bound SQL execution with typed filters and `ORDER BY`
-- CLI for typed table creation, validated inserts, and streaming SQL queries
+- CLI for typed writes, SQL queries, and an introspective interactive shell
 - Bounds, overlap, truncation, format, and page-position validation
 - Warning-clean C++20 build on macOS and Linux CI
 
@@ -48,15 +48,17 @@ make
 ./build/pageforge demo.db insert people 3 Bob false analyst
 ./build/pageforge demo.db query \
   "SELECT name, id FROM people WHERE active = TRUE ORDER BY id DESC LIMIT 10;"
+./build/pageforge demo.db shell
 ```
 
-Each command starts a new process and reopens the same database. `init` refuses
+The one-shot commands reopen the same database in a new process. `init` refuses
 an existing path. `create-table` accepts `int`, `text`, and `bool` columns, with
 `?` marking nullable columns. `insert` parses values from the stored schema and
-uses uppercase `NULL` for null. `query` prints an escaped, tab-separated result.
-Low-level `put`, `get`, `erase`, and `list` commands remain available for raw
-record inspection. See [docs/CLI.md](docs/CLI.md) for the complete command and
-output contract. Use a disposable path if you want to start over.
+uses uppercase `NULL` for null. `query` prints an escaped, tab-separated result;
+`shell` adds `.tables` and `.schema` introspection for live demos. Low-level
+`put`, `get`, `erase`, and `list` commands remain available for raw record
+inspection. See [docs/CLI.md](docs/CLI.md) for the complete command and output
+contract. Use a disposable path if you want to start over.
 
 The test suite writes only temporary heap files and removes them afterward. See
 [docs/STORAGE_FORMAT.md](docs/STORAGE_FORMAT.md) for byte layouts and validation
@@ -89,7 +91,8 @@ documents binding and end-to-end execution.
 - [ ] Write-ahead logging and crash recovery
 - [ ] Transactions, locking, and isolation
 - [x] Typed table and SQL CLI with end-to-end smoke test
-- [ ] Interactive shell, benchmarks, Docker image, and demo database
+- [x] Interactive SQL shell with table and schema introspection
+- [ ] Benchmarks, Docker image, and demo database
 
 Unchecked items are planned milestones rather than current claims.
 

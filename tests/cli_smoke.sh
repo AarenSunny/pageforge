@@ -4,7 +4,8 @@ set -eu
 temporary_dir=$(mktemp -d)
 database="$temporary_dir/demo.db"
 symlink="$temporary_dir/link.db"
-trap 'rm -f "$database" "$symlink"; rmdir "$temporary_dir"' EXIT
+shell_errors="$temporary_dir/shell-errors.txt"
+trap 'rm -f "$database" "$symlink" "$shell_errors"; rmdir "$temporary_dir"' EXIT
 
 cli=$1
 "$cli" "$database" init >/dev/null
@@ -75,6 +76,23 @@ special=$(printf 'Tab\tName\\Path')
 [ "$("$cli" "$database" query "SELECT id FROM people WHERE name = 'Plus'")" = \
   "$(printf 'id\n5')" ]
 
+shell_output=$(printf '%s\n' \
+  '.tables' \
+  '.schema people' \
+  'SELECT name FROM people WHERE active = TRUE ORDER BY id DESC;' \
+  '.unknown' \
+  'SELECT id FROM people WHERE id = 2;' \
+  '.quit' | "$cli" "$database" shell 2>"$shell_errors")
+[ "$shell_output" = "$(printf '%s\n' \
+  'People' \
+  'People(id INTEGER NOT NULL, name TEXT NOT NULL, active BOOLEAN NOT NULL, note TEXT NULL) [schema version 1]' \
+  'name' \
+  'Grace' \
+  'Ada' \
+  'id' \
+  '2')" ]
+grep -q "unknown shell command" "$shell_errors"
+
 if "$cli" "$database" create-table people other:int >/dev/null 2>&1; then
   echo "case-insensitive duplicate table was accepted" >&2
   exit 1
@@ -95,4 +113,4 @@ if "$cli" "$database" query "SELECT missing FROM people" >/dev/null 2>&1; then
   echo "query with unknown column was accepted" >&2
   exit 1
 fi
-echo "PASS  CLI raw records, typed tables, filtering, ordering, and validation"
+echo "PASS  CLI raw records, typed tables, SQL, interactive shell, and validation"
