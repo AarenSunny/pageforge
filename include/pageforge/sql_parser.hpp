@@ -28,11 +28,19 @@ struct SqlPredicate {
   bool operator==(const SqlPredicate&) const = default;
 };
 
+struct SqlOrder {
+  std::string column;
+  bool descending = false;
+
+  bool operator==(const SqlOrder&) const = default;
+};
+
 struct SelectPlan {
   std::string table;
   bool select_all = false;
   std::vector<std::string> columns;
   std::vector<SqlPredicate> predicates;
+  std::optional<SqlOrder> order;
   std::optional<std::size_t> limit;
 
   bool operator==(const SelectPlan&) const = default;

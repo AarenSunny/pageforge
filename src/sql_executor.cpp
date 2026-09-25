@@ -102,6 +102,34 @@ RowPredicate bind_predicate(const Schema& schema, const SqlPredicate& predicate)
   };
 }
 
+RowLess bind_order(const Schema& schema, const SqlOrder& order) {
+  const auto column_index = resolve_column(schema, order.column);
+  const auto type = schema[column_index].type;
+  const auto descending = order.descending;
+  return [column_index, type, descending](const TableRow& left, const TableRow& right) {
+    const auto& left_value = left.values[column_index];
+    const auto& right_value = right.values[column_index];
+    const bool left_null = std::holds_alternative<std::monostate>(left_value);
+    const bool right_null = std::holds_alternative<std::monostate>(right_value);
+    if (left_null || right_null) {
+      if (left_null == right_null) return false;
+      return !left_null;  // Nulls sort last in both directions.
+    }
+
+    const auto less = [&](const Value& first, const Value& second) {
+      switch (type) {
+        case DataType::Integer:
+          return std::get<std::int64_t>(first) < std::get<std::int64_t>(second);
+        case DataType::Text:
+          return std::get<std::string>(first) < std::get<std::string>(second);
+        case DataType::Boolean: return std::get<bool>(first) < std::get<bool>(second);
+      }
+      return false;
+    };
+    return descending ? less(right_value, left_value) : less(left_value, right_value);
+  };
+}
+
 }  // namespace
 
 BoundSelect bind_select(TableStore& tables, Catalog& catalog, const SelectPlan& plan) {
@@ -113,6 +141,7 @@ BoundSelect bind_select(TableStore& tables, Catalog& catalog, const SelectPlan& 
   for (const auto& predicate : plan.predicates) {
     query.filter(bind_predicate(table.schema, predicate));
   }
+  if (plan.order) query.sort(bind_order(table.schema, *plan.order));
 
   Schema output_schema;
   if (plan.select_all) {

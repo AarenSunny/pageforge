@@ -27,7 +27,7 @@ pageforge contacts.db create-table people id:int name:text active:bool note:text
 pageforge contacts.db insert people 1 "Ada Lovelace" true NULL
 pageforge contacts.db insert people 2 "Grace Hopper" true compiler
 pageforge contacts.db query \
-  "SELECT name FROM people WHERE active = TRUE AND note IS NOT NULL;"
+  "SELECT name FROM people WHERE active = TRUE ORDER BY name ASC;"
 ```
 
 `insert` requires exactly one shell argument per column. Integers use signed
@@ -45,7 +45,8 @@ statement so it reaches PageForge as one argument.
 
 The supported `WHERE` syntax accepts one or more comparisons joined by `AND`,
 plus `IS NULL` and `IS NOT NULL`. Predicates remain streaming; `OR`, grouping,
-and arbitrary expressions are intentionally rejected for now.
+and arbitrary expressions are intentionally rejected for now. A single
+`ORDER BY` column may use `ASC` (the default) or `DESC`; nulls appear last.
 
 ## Raw workflow
 

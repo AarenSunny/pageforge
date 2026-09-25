@@ -13,6 +13,7 @@
 namespace pageforge {
 
 using RowPredicate = std::function<bool(const TableRow&)>;
+using RowLess = std::function<bool(const TableRow&, const TableRow&)>;
 
 class RowOperator {
  public:
@@ -30,6 +31,7 @@ class Query {
   Query& operator=(Query&&) noexcept = default;
 
   Query& filter(RowPredicate predicate);
+  Query& sort(RowLess less);
   Query& project(std::vector<std::size_t> columns);
   Query& limit(std::size_t count);
   [[nodiscard]] std::optional<TableRow> next();

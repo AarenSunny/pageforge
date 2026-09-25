@@ -1,7 +1,9 @@
 #include "pageforge/query.hpp"
 
+#include <algorithm>
 #include <stdexcept>
 #include <utility>
+#include <vector>
 
 namespace pageforge {
 namespace {
@@ -52,6 +54,32 @@ class ProjectOperator final : public RowOperator {
   std::vector<std::size_t> columns_;
 };
 
+class SortOperator final : public RowOperator {
+ public:
+  SortOperator(std::unique_ptr<RowOperator> input, RowLess less)
+      : input_(std::move(input)), less_(std::move(less)) {}
+
+  std::optional<TableRow> next() override {
+    if (!loaded_) load();
+    if (next_ == rows_.size()) return std::nullopt;
+    return std::move(rows_[next_++]);
+  }
+
+ private:
+  void load() {
+    while (auto row = input_->next()) rows_.push_back(std::move(*row));
+    std::stable_sort(rows_.begin(), rows_.end(), less_);
+    input_.reset();
+    loaded_ = true;
+  }
+
+  std::unique_ptr<RowOperator> input_;
+  RowLess less_;
+  std::vector<TableRow> rows_;
+  std::size_t next_ = 0;
+  bool loaded_ = false;
+};
+
 class LimitOperator final : public RowOperator {
  public:
   LimitOperator(std::unique_ptr<RowOperator> input, std::size_t count)
@@ -81,6 +109,12 @@ Query Query::from(TableStore& tables, std::string_view table_name) {
 Query& Query::filter(RowPredicate predicate) {
   if (!predicate) throw std::invalid_argument("filter predicate must not be empty");
   root_ = std::make_unique<FilterOperator>(std::move(root_), std::move(predicate));
+  return *this;
+}
+
+Query& Query::sort(RowLess less) {
+  if (!less) throw std::invalid_argument("sort comparator must not be empty");
+  root_ = std::make_unique<SortOperator>(std::move(root_), std::move(less));
   return *this;
 }
 

@@ -699,6 +699,8 @@ void query_pipeline_filters_projects_and_limits() {
                                    std::string("analyst")});
     (void)tables.insert("people", {std::int64_t{3}, std::string("Grace"), true,
                                    std::monostate{}});
+    const auto second_ada_id = tables.insert(
+        "people", {std::int64_t{4}, std::string("Ada"), false, std::string("historian")});
 
     std::size_t examined = 0;
     auto query = Query::from(tables, "people");
@@ -724,6 +726,23 @@ void query_pipeline_filters_projects_and_limits() {
     check(a && a->values == pageforge::Tuple{std::string("Ada")} &&
               g && g->values == pageforge::Tuple{std::string("Grace")} && !active.next(),
           "filter and projection should stream matching rows in stable order");
+
+    auto sorted = Query::from(tables, "people");
+    sorted.sort([](const pageforge::TableRow& left, const pageforge::TableRow& right) {
+            return std::get<std::string>(left.values[1]) >
+                   std::get<std::string>(right.values[1]);
+          })
+        .project({1});
+    const auto grace = sorted.next();
+    const auto bob = sorted.next();
+    const auto ada = sorted.next();
+    const auto second_ada = sorted.next();
+    check(grace && grace->values == pageforge::Tuple{std::string("Grace")} &&
+              bob && bob->values == pageforge::Tuple{std::string("Bob")} &&
+              ada && ada->id == ada_id && ada->values == pageforge::Tuple{std::string("Ada")} &&
+              second_ada && second_ada->id == second_ada_id &&
+              second_ada->values == pageforge::Tuple{std::string("Ada")} && !sorted.next(),
+          "sort should materialize once, order rows, and retain scan order for ties");
   }
   std::filesystem::remove(path);
 }
@@ -745,6 +764,8 @@ void query_pipeline_validates_and_short_circuits() {
     auto invalid = Query::from(tables, "items");
     check_throws<std::invalid_argument>([&] { invalid.filter({}); },
                                         "query should reject an empty predicate");
+    check_throws<std::invalid_argument>([&] { invalid.sort({}); },
+                                        "query should reject an empty sort comparator");
     check_throws<std::out_of_range>([&] { invalid.project({1}); },
                                     "projection should validate indices before consuming rows");
     check(invalid.column_count() == 1 && invalid.next(),
@@ -885,6 +906,18 @@ void sql_parser_builds_select_plans() {
   check(null_test.predicates.size() == 1 &&
             null_test.predicates[0].kind == pageforge::SqlPredicateKind::IsNull,
         "parser should represent IS NULL separately from comparison with NULL");
+
+  const auto ordered = pageforge::parse_select(
+      "SELECT name FROM people WHERE active = TRUE ORDER BY id DESC LIMIT 2;");
+  check(ordered.order && ordered.order->column == "id" && ordered.order->descending &&
+            ordered.limit == 2,
+        "parser should record descending ORDER BY before LIMIT");
+  const auto ascending = pageforge::parse_select("SELECT * FROM people ORDER BY name ASC");
+  check(ascending.order && ascending.order->column == "name" && !ascending.order->descending,
+        "parser should treat explicit ASC as ascending");
+  const auto default_order = pageforge::parse_select("SELECT * FROM people ORDER BY id");
+  check(default_order.order && !default_order.order->descending,
+        "parser should default ORDER BY to ascending");
 }
 
 void sql_parser_maps_comparisons_and_signs() {
@@ -917,7 +950,9 @@ void sql_parser_rejects_invalid_statements() {
       "SELECT * FROM t; SELECT * FROM u", "SELECT * FROM t;;",
       "SELECT * FROM t LIMIT 1 WHERE x = 2", "SELECT * FROM t WHERE x IS",
       "SELECT * FROM t WHERE x IS FALSE", "SELECT * FROM t WHERE x = 1 AND",
-      "SELECT * FROM t WHERE x = 1 OR x = 2"};
+      "SELECT * FROM t WHERE x = 1 OR x = 2", "SELECT * FROM t ORDER x",
+      "SELECT * FROM t ORDER BY", "SELECT * FROM t ORDER BY x SIDEWAYS",
+      "SELECT * FROM t LIMIT 1 ORDER BY x"};
   for (const auto& sql : invalid) {
     check_throws<SqlParseError>([&] { (void)pageforge::parse_select(sql); },
                                 "invalid SELECT syntax should fail");
@@ -999,6 +1034,26 @@ void sql_execution_binds_and_streams_results() {
               grace_with_note->values == pageforge::Tuple{std::string("Grace")} &&
               !present_notes.next(),
           "IS NOT NULL should compose with typed comparisons");
+
+    auto descending = pageforge::execute_select_sql(
+        tables, catalog, "SELECT name FROM People ORDER BY id DESC LIMIT 2");
+    const auto grace_first = descending.next();
+    const auto bob_second = descending.next();
+    check(grace_first && grace_first->values == pageforge::Tuple{std::string("Grace")} &&
+              bob_second && bob_second->values == pageforge::Tuple{std::string("Bob")} &&
+              !descending.next(),
+          "ORDER BY should bind unprojected columns and run before LIMIT");
+
+    auto nulls_last = pageforge::execute_select_sql(
+        tables, catalog, "SELECT name FROM People ORDER BY note ASC");
+    const auto bob_by_note = nulls_last.next();
+    const auto grace_by_note = nulls_last.next();
+    const auto ada_by_note = nulls_last.next();
+    check(bob_by_note && bob_by_note->values == pageforge::Tuple{std::string("Bob")} &&
+              grace_by_note && grace_by_note->values == pageforge::Tuple{std::string("Grace")} &&
+              ada_by_note && ada_by_note->values == pageforge::Tuple{std::string("Ada")} &&
+              !nulls_last.next(),
+          "ascending ORDER BY should use typed values and place nulls last");
   }
   std::filesystem::remove(path);
 }
@@ -1026,6 +1081,7 @@ void sql_execution_rejects_binding_errors() {
         "SELECT * FROM people WHERE name = 7",
         "SELECT * FROM people WHERE active > TRUE",
         "SELECT * FROM people WHERE id >= 1 AND missing IS NULL",
+        "SELECT * FROM people ORDER BY missing",
         "SELECT * FROM THINGS",
         "SELECT NAME FROM ambiguous"};
     for (const auto& sql : invalid) {

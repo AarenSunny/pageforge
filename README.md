@@ -21,10 +21,10 @@ compaction, a durable heap file, a buffer manager, and typed catalog metadata.
 - Persistent table catalog with named, versioned schemas and duplicate detection
 - Typed table rows with schema-bound insert, read, scan, and delete operations
 - Streaming record and typed-table cursors without materializing row sets
-- Lazy query operators for filtering, projection, and limits
+- Composable filter, stable sort, projection, and limit query operators
 - Position-aware SQL lexer with literals, comparisons, and comments
 - Strict `SELECT` parser with conjunctive predicates and explicit null tests
-- Catalog-bound SQL execution over successive streaming filters
+- Catalog-bound SQL execution with typed filters and `ORDER BY`
 - CLI for typed table creation, validated inserts, and streaming SQL queries
 - Bounds, overlap, truncation, format, and page-position validation
 - Warning-clean C++20 build on macOS and Linux CI
@@ -47,7 +47,7 @@ make
 ./build/pageforge demo.db insert people 2 "Grace Hopper" true compiler
 ./build/pageforge demo.db insert people 3 Bob false analyst
 ./build/pageforge demo.db query \
-  "SELECT name, id FROM people WHERE active = TRUE AND note IS NOT NULL LIMIT 10;"
+  "SELECT name, id FROM people WHERE active = TRUE ORDER BY id DESC LIMIT 10;"
 ```
 
 Each command starts a new process and reopens the same database. `init` refuses
@@ -81,9 +81,9 @@ documents binding and end-to-end execution.
 - [x] Catalog metadata and schema persistence
 - [x] Typed table rows with logical table isolation
 - [x] Streaming record and typed-table scans
-- [x] Streaming filter, projection, and limit operators
+- [x] Filter, stable in-memory sort, projection, and limit operators
 - [x] Position-aware SQL lexical analysis
-- [x] `SELECT` plans for projection, comparisons, `AND`, null tests, and limit
+- [x] `SELECT` plans for projection, filters, ordering, and limit
 - [x] Catalog binding and streaming execution for supported `SELECT` plans
 - [ ] Joins and aggregation
 - [ ] Write-ahead logging and crash recovery

@@ -8,7 +8,7 @@ types against the persisted catalog, and returns a move-only `BoundSelect`.
 auto result = pageforge::execute_select_sql(
     tables, catalog,
     "SELECT name, id FROM people "
-    "WHERE active = TRUE AND note IS NOT NULL LIMIT 10");
+    "WHERE active = TRUE AND note IS NOT NULL ORDER BY id DESC LIMIT 10");
 
 for (const auto& column : result.output_schema()) {
     // Column names and types in result order.
@@ -33,6 +33,12 @@ the result is unknown and the row is removed by `WHERE`; consequently
 null tests for columns of any type. The output exposes its projected `Schema`,
 including a wildcard query that returns the entire table schema even when
 `LIMIT 0` yields no rows.
+
+`ORDER BY` resolves against the source schema, so a query may sort on a column
+that it does not project. The sort happens after filtering and before projection
+and limit. It compares integers numerically, text by `std::string` byte order,
+and booleans with `false` before `true`; nulls sort last in both directions.
+Sorting is stable but blocking and currently keeps every filtered row in memory.
 
 Execution remains single-threaded and inherits the underlying cursor's
 non-snapshot behavior. The CLI exposes this path through its `query` command and

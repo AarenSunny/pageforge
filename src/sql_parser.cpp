@@ -41,6 +41,17 @@ class Parser {
       plan.predicates.push_back(parse_predicate());
       while (match_keyword("AND")) plan.predicates.push_back(parse_predicate());
     }
+    if (match_keyword("ORDER")) {
+      expect_keyword("BY");
+      SqlOrder order;
+      order.column = expect_identifier("expected a column after ORDER BY");
+      if (match_keyword("DESC")) {
+        order.descending = true;
+      } else {
+        (void)match_keyword("ASC");
+      }
+      plan.order = std::move(order);
+    }
     if (match_keyword("LIMIT")) plan.limit = parse_limit();
     (void)match(SqlTokenKind::Semicolon);
     if (current().kind != SqlTokenKind::End) fail(current(), "unexpected token after SELECT statement");
