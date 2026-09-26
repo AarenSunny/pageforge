@@ -8,12 +8,13 @@ COPY include ./include
 COPY src ./src
 
 RUN make build/pageforge CXX=g++ \
-    CXXFLAGS="-std=c++20 -O2 -g0 -Wall -Wextra -Wpedantic -Werror"
+    CXXFLAGS="-std=c++20 -O2 -g0 -Wall -Wextra -Wpedantic -Werror \
+    -static-libstdc++ -static-libgcc"
 
 FROM debian:bookworm-slim AS runtime
 
 RUN apt-get update \
-    && apt-get install --yes --no-install-recommends libstdc++6 passwd \
+    && apt-get install --yes --no-install-recommends passwd \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system pageforge \
     && useradd --system --gid pageforge --create-home pageforge \

@@ -1,9 +1,10 @@
 # Docker image
 
-The multi-stage image compiles PageForge with GCC 14, copies only the executable
-into a Debian Bookworm runtime, and runs it as the unprivileged `pageforge`
-user. Database files live under `/data`; use a named volume to preserve them
-across the intentionally short-lived CLI containers.
+The multi-stage image compiles PageForge with GCC 14 and links its C++ runtime
+statically, then copies only the executable into a Debian Bookworm runtime. It
+runs as the unprivileged `pageforge` user. Database files live under `/data`;
+use a named volume to preserve them across the intentionally short-lived CLI
+containers.
 
 ```bash
 docker build --tag pageforge .
