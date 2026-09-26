@@ -6,10 +6,11 @@ SOURCES := src/page.cpp src/heap_file.cpp src/buffer_pool.cpp src/record_store.c
 HEADERS := include/pageforge/page.hpp include/pageforge/heap_file.hpp include/pageforge/buffer_pool.hpp include/pageforge/record_store.hpp include/pageforge/tuple.hpp include/pageforge/catalog.hpp include/pageforge/table_store.hpp include/pageforge/query.hpp include/pageforge/sql_lexer.hpp include/pageforge/sql_parser.hpp include/pageforge/sql_executor.hpp
 TEST_BINARY := build/pageforge_tests
 CLI_BINARY := build/pageforge
+BENCH_BINARY := build/pageforge_bench
 
-.PHONY: all test check clean
+.PHONY: all test benchmark benchmark-smoke check clean
 
-all: $(TEST_BINARY) $(CLI_BINARY)
+all: $(TEST_BINARY) $(CLI_BINARY) $(BENCH_BINARY)
 
 $(TEST_BINARY): $(SOURCES) tests/test_main.cpp $(HEADERS)
 	@mkdir -p build
@@ -19,11 +20,20 @@ $(CLI_BINARY): $(SOURCES) src/cli.cpp $(HEADERS)
 	@mkdir -p build
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(SOURCES) src/cli.cpp -o $(CLI_BINARY)
 
+$(BENCH_BINARY): $(SOURCES) src/benchmark.cpp $(HEADERS)
+	@mkdir -p build
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(SOURCES) src/benchmark.cpp -o $(BENCH_BINARY)
+
 test: $(TEST_BINARY) $(CLI_BINARY)
 	./$(TEST_BINARY)
 	sh tests/cli_smoke.sh ./$(CLI_BINARY)
 
-check: test
+benchmark: $(BENCH_BINARY)
+
+benchmark-smoke: $(BENCH_BINARY)
+	sh tests/benchmark_smoke.sh ./$(BENCH_BINARY)
+
+check: test benchmark-smoke
 
 clean:
 	rm -rf build

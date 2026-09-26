@@ -27,6 +27,7 @@ compaction, a durable heap file, a buffer manager, and typed catalog metadata.
 - Catalog-bound SQL execution with typed filters and `ORDER BY`
 - CLI for typed writes, SQL queries, and an introspective interactive shell
 - Multi-stage, non-root Docker image with cross-container persistence tests
+- JSON benchmark harness for durable inserts, SQL filters, and reopen scans
 - Bounds, overlap, truncation, format, and page-position validation
 - Warning-clean C++20 build on macOS and Linux CI
 
@@ -37,6 +38,10 @@ Requires a C++20 compiler and Make.
 ```bash
 make check
 ```
+
+Run `make benchmark` to build the standalone performance harness, then see
+[docs/BENCHMARKS.md](docs/BENCHMARKS.md) for its workload and measurement
+contract.
 
 ## Try the storage engine
 
@@ -74,7 +79,8 @@ describes tokenization, and [docs/SQL_PARSER.md](docs/SQL_PARSER.md) defines the
 currently accepted `SELECT` grammar and logical plan. [docs/SQL_EXECUTION.md](docs/SQL_EXECUTION.md)
 documents binding and end-to-end execution.
 [docs/DOCKER.md](docs/DOCKER.md) provides the container build, persistence,
-and interactive-shell workflow.
+and interactive-shell workflow. [docs/BENCHMARKS.md](docs/BENCHMARKS.md)
+documents the repeatable performance harness and its JSON output.
 
 ## Architecture roadmap
 
@@ -96,7 +102,8 @@ and interactive-shell workflow.
 - [x] Typed table and SQL CLI with end-to-end smoke test
 - [x] Interactive SQL shell with table and schema introspection
 - [x] Multi-stage Docker image and container persistence smoke test
-- [ ] Benchmarks and demo database
+- [x] Validating benchmark harness with machine-readable metrics
+- [ ] Demo database
 
 Unchecked items are planned milestones rather than current claims.
 
