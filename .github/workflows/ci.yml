@@ -14,14 +14,22 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: make check
 
   sanitizers:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: >-
           make test
           CXXFLAGS='-std=c++20 -O1 -g -Wall -Wextra -Wpedantic -Werror
           -fsanitize=address,undefined -fno-omit-frame-pointer'
+
+  container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - run: docker build --tag pageforge:ci .
+      - run: sh tests/docker_smoke.sh pageforge:ci

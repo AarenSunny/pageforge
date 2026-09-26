@@ -26,6 +26,7 @@ compaction, a durable heap file, a buffer manager, and typed catalog metadata.
 - Strict `SELECT` parser with conjunctive predicates and explicit null tests
 - Catalog-bound SQL execution with typed filters and `ORDER BY`
 - CLI for typed writes, SQL queries, and an introspective interactive shell
+- Multi-stage, non-root Docker image with cross-container persistence tests
 - Bounds, overlap, truncation, format, and page-position validation
 - Warning-clean C++20 build on macOS and Linux CI
 
@@ -72,6 +73,8 @@ demonstrates the composable streaming query pipeline; [docs/SQL_LEXER.md](docs/S
 describes tokenization, and [docs/SQL_PARSER.md](docs/SQL_PARSER.md) defines the
 currently accepted `SELECT` grammar and logical plan. [docs/SQL_EXECUTION.md](docs/SQL_EXECUTION.md)
 documents binding and end-to-end execution.
+[docs/DOCKER.md](docs/DOCKER.md) provides the container build, persistence,
+and interactive-shell workflow.
 
 ## Architecture roadmap
 
@@ -92,7 +95,8 @@ documents binding and end-to-end execution.
 - [ ] Transactions, locking, and isolation
 - [x] Typed table and SQL CLI with end-to-end smoke test
 - [x] Interactive SQL shell with table and schema introspection
-- [ ] Benchmarks, Docker image, and demo database
+- [x] Multi-stage Docker image and container persistence smoke test
+- [ ] Benchmarks and demo database
 
 Unchecked items are planned milestones rather than current claims.
 
