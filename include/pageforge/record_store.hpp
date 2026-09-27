@@ -45,6 +45,7 @@ class RecordStore {
 
   [[nodiscard]] RecordId insert(std::span<const std::byte> bytes);
   [[nodiscard]] std::vector<std::byte> read(RecordId id);
+  void replace(RecordId id, std::span<const std::byte> bytes);
   bool erase(RecordId id);
   [[nodiscard]] RecordCursor cursor();
   [[nodiscard]] std::vector<Record> scan();

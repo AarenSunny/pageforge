@@ -162,6 +162,49 @@ std::vector<std::byte> SlottedPage::read(SlotId slot_id) const {
   return {bytes_.begin() + slot.offset, bytes_.begin() + slot.offset + slot.length};
 }
 
+void SlottedPage::replace(SlotId slot_id, std::span<const std::byte> record) {
+  if (record.empty()) throw std::invalid_argument("records must not be empty");
+  if (record.size() > std::numeric_limits<std::uint16_t>::max()) throw PageFull("record is too large");
+  if (!contains(slot_id)) throw std::out_of_range("slot does not contain a live record");
+
+  std::size_t payload_bytes = record.size();
+  for (SlotId current = 0; current < slot_count(); ++current) {
+    if (current == slot_id) continue;
+    const auto slot = read_slot(bytes_, current);
+    if ((slot.flags & kLive) != 0) payload_bytes += slot.length;
+  }
+  const auto directory_end = kPageHeaderSize + slot_count() * kSlotSize;
+  if (directory_end + payload_bytes > kPageSize) {
+    throw PageFull("replacement record has insufficient page space");
+  }
+
+  Bytes compacted{};
+  std::copy(bytes_.begin(), bytes_.begin() + kPageHeaderSize, compacted.begin());
+  std::uint16_t free_end = static_cast<std::uint16_t>(kPageSize);
+  for (SlotId current = 0; current < slot_count(); ++current) {
+    const auto slot = read_slot(bytes_, current);
+    if ((slot.flags & kLive) == 0) {
+      write_slot(compacted, current, {0, 0, 0});
+      continue;
+    }
+    const auto replacement = current == slot_id;
+    const auto length = replacement ? record.size() : slot.length;
+    free_end = static_cast<std::uint16_t>(free_end - length);
+    if (replacement) {
+      std::copy(record.begin(), record.end(), compacted.begin() + free_end);
+    } else {
+      std::copy(bytes_.begin() + slot.offset, bytes_.begin() + slot.offset + slot.length,
+                compacted.begin() + free_end);
+    }
+    write_slot(compacted, current,
+               {free_end, static_cast<std::uint16_t>(length), kLive});
+  }
+  write_u16(compacted, kFreeStartOffset, static_cast<std::uint16_t>(directory_end));
+  write_u16(compacted, kFreeEndOffset, free_end);
+  bytes_ = std::move(compacted);
+  update_checksum();
+}
+
 bool SlottedPage::erase(SlotId slot_id) {
   if (slot_id >= slot_count()) return false;
   const auto slot = read_slot(bytes_, slot_id);

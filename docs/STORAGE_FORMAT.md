@@ -36,8 +36,10 @@ length, and flags. All integers use little-endian encoding.
 
 Deletes tombstone a slot without moving other records. Insertion reuses a
 tombstone and compacts payload bytes only when contiguous space is insufficient.
-Slot numbers therefore remain stable across deletion and compaction—a property
-the future B-tree can rely on when it stores record identifiers as `(page, slot)`.
+Replacement validates aggregate capacity before rebuilding the payload region
+with the target slot unchanged. Slot numbers therefore remain stable across
+replacement, deletion, and compaction—a property used by persistent B+ tree
+leaf records and their `(page, slot)` links.
 
 ## Validation guarantees
 

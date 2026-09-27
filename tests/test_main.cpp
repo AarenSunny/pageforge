@@ -5,6 +5,8 @@
 #include <fstream>
 #include <functional>
 #include <iostream>
+#include <limits>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -22,6 +24,7 @@
 #include "pageforge/sql_lexer.hpp"
 #include "pageforge/sql_parser.hpp"
 #include "pageforge/sql_executor.hpp"
+#include "pageforge/bplus_tree.hpp"
 
 namespace {
 
@@ -43,6 +46,9 @@ using pageforge::SqlLexError;
 using pageforge::SqlTokenKind;
 using pageforge::SqlParseError;
 using pageforge::SqlBindError;
+using pageforge::BPlusTreeIndex;
+using pageforge::IndexCorruption;
+using pageforge::RecordId;
 
 std::vector<std::byte> bytes(std::string_view value) {
   const auto* begin = reinterpret_cast<const std::byte*>(value.data());
@@ -92,6 +98,28 @@ void deletion_compaction_and_slot_reuse() {
   check(text(page.read(first)) == std::string(900, 'a'), "compaction must preserve the first slot");
   check(text(page.read(third)) == std::string(900, 'c'), "compaction must preserve later slots");
   check(text(page.read(replacement)) == std::string(1100, 'd'), "replacement should use reclaimed space");
+  page.validate();
+}
+
+void replacement_preserves_slots_and_failure_atomicity() {
+  auto page = SlottedPage::initialize(9);
+  const auto first = page.insert(bytes(std::string(1000, 'a')));
+  const auto second = page.insert(bytes(std::string(1000, 'b')));
+  page.replace(first, bytes(std::string(2500, 'c')));
+  check(text(page.read(first)) == std::string(2500, 'c') &&
+            text(page.read(second)) == std::string(1000, 'b'),
+        "replacement should preserve the target slot and neighboring records");
+  page.replace(first, bytes("small"));
+  check(text(page.read(first)) == "small", "replacement should support shrinking a record");
+
+  check_throws<PageFull>([&] { page.replace(first, bytes(std::string(3500, 'x'))); },
+                         "oversized replacement should fail");
+  check(text(page.read(first)) == "small" && text(page.read(second)) == std::string(1000, 'b'),
+        "failed replacement must leave the page unchanged");
+  check_throws<std::out_of_range>([&] { page.replace(99, bytes("missing")); },
+                                  "replacement should reject a missing slot");
+  check_throws<std::invalid_argument>([&] { page.replace(first, {}); },
+                                      "replacement should reject an empty record");
   page.validate();
 }
 
@@ -1103,12 +1131,102 @@ void sql_execution_rejects_binding_errors() {
   std::filesystem::remove(path);
 }
 
+void bplus_leaf_index_splits_ranges_and_reopens() {
+  const auto path = std::filesystem::temp_directory_path() / "pageforge-bplus-leaves-test.db";
+  std::filesystem::remove(path);
+  RecordId header_id{};
+  {
+    auto heap = HeapFile::create(path);
+    BufferPool pool(heap, 4);
+    RecordStore records(pool);
+    auto index = BPlusTreeIndex::create(records);
+    header_id = index.header_id();
+
+    for (std::int64_t position = 0; position < 400; ++position) {
+      const auto key = (position * 137) % 400;
+      check(index.insert(key, {static_cast<pageforge::PageId>(10 + key / 50),
+                               static_cast<pageforge::SlotId>(key % 50)}),
+            "new index entry should be inserted");
+    }
+    check(index.insert(42, {99, 2}) && index.insert(42, {99, 1}),
+          "duplicate keys with distinct record IDs should be retained");
+    check(!index.insert(42, {99, 1}), "an exact index entry should be idempotent");
+    check(index.insert(std::numeric_limits<std::int64_t>::min(), {200, 1}) &&
+              index.insert(std::numeric_limits<std::int64_t>::max(), {200, 2}),
+          "signed key extremes should be ordered without narrowing");
+    check(index.leaf_count() >= 4, "capacity overflow should split the persistent leaf chain");
+
+    const auto matches = index.find(42);
+    check(matches == std::vector<RecordId>{{10, 42}, {99, 1}, {99, 2}},
+          "point lookup should return duplicate-key record IDs in stable order");
+    const auto range = index.range(120, 135);
+    check(range.size() == 16 && range.front().key == 120 && range.back().key == 135,
+          "inclusive range lookup should cross split leaf boundaries in key order");
+    for (std::size_t offset = 1; offset < range.size(); ++offset) {
+      check(range[offset - 1].key + 1 == range[offset].key,
+            "range lookup should not skip or reorder keys");
+    }
+    const auto all = index.range(std::nullopt, std::nullopt);
+    check(all.size() == 404 && all.front().key == std::numeric_limits<std::int64_t>::min() &&
+              all.back().key == std::numeric_limits<std::int64_t>::max(),
+          "unbounded range should cover every ordered entry");
+    check_throws<std::invalid_argument>([&] { (void)index.range(8, 7); },
+                                        "range lookup should reject reversed bounds");
+    pool.flush_all();
+  }
+
+  {
+    auto heap = HeapFile::open(path);
+    BufferPool pool(heap, 2);
+    RecordStore records(pool);
+    auto index = BPlusTreeIndex::open(records, header_id);
+    check(index.leaf_count() >= 4 && index.find(42).size() == 3,
+          "index header, leaf links, and duplicate keys should survive reopen");
+    const auto tail = index.range(398, std::nullopt);
+    check(tail.size() == 3 && tail[0].key == 398 && tail[1].key == 399 &&
+              tail[2].key == std::numeric_limits<std::int64_t>::max(),
+          "reopened index should preserve upper-tail range traversal");
+  }
+  std::filesystem::remove(path);
+}
+
+void bplus_leaf_index_detects_corruption() {
+  const auto path = std::filesystem::temp_directory_path() / "pageforge-bplus-corruption-test.db";
+  std::filesystem::remove(path);
+  {
+    auto heap = HeapFile::create(path);
+    BufferPool pool(heap, 2);
+    RecordStore records(pool);
+    auto index = BPlusTreeIndex::create(records);
+    records.replace({0, 0}, bytes("not an index leaf"));
+    check_throws<IndexCorruption>([&] { (void)index.leaf_count(); },
+                                  "malformed index leaves should be rejected");
+    records.replace(index.header_id(), bytes("not an index header"));
+    check_throws<IndexCorruption>([&] { (void)BPlusTreeIndex::open(records, index.header_id()); },
+                                  "malformed index headers should be rejected");
+  }
+  std::filesystem::remove(path);
+
+  const auto missing_path =
+      std::filesystem::temp_directory_path() / "pageforge-bplus-missing-header-test.db";
+  std::filesystem::remove(missing_path);
+  {
+    auto heap = HeapFile::create(missing_path);
+    BufferPool pool(heap, 1);
+    RecordStore records(pool);
+    check_throws<IndexCorruption>([&] { (void)BPlusTreeIndex::open(records, {0, 0}); },
+                                  "missing index headers should become index corruption errors");
+  }
+  std::filesystem::remove(missing_path);
+}
+
 }  // namespace
 
 int main() {
   const std::vector<std::pair<std::string, std::function<void()>>> tests{
       {"slotted page round-trip", slotted_page_round_trip},
       {"deletion, compaction, and slot reuse", deletion_compaction_and_slot_reuse},
+      {"stable record replacement", replacement_preserves_slots_and_failure_atomicity},
       {"page capacity and corruption", page_capacity_and_corruption},
       {"heap file persistence", heap_file_persists_pages},
       {"heap file corruption detection", heap_file_detects_page_corruption},
@@ -1142,6 +1260,8 @@ int main() {
       {"SQL parser invalid statements", sql_parser_rejects_invalid_statements},
       {"SQL binding and execution", sql_execution_binds_and_streams_results},
       {"SQL binding validation", sql_execution_rejects_binding_errors},
+      {"B+ leaf splits, ranges, and reopen", bplus_leaf_index_splits_ranges_and_reopens},
+      {"B+ leaf corruption detection", bplus_leaf_index_detects_corruption},
   };
   std::size_t passed = 0;
   for (const auto& [name, test] : tests) {

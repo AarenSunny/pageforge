@@ -16,7 +16,8 @@ compaction, a durable heap file, a buffer manager, and typed catalog metadata.
 - Full-page and heap-header corruption checksums
 - Durable page allocation, reads, writes, flushing, and reopen
 - Clock-sweep buffer pool with RAII pin guards and dirty-page eviction
-- Multi-page record store with `(page_id, slot_id)` IDs, deletion, and scans
+- Multi-page record store with stable-ID replacement, deletion, and scans
+- Persistent B+ tree leaf nodes with splits, duplicate keys, and range scans
 - Portable typed tuples with integers, text, booleans, nulls, and strict decoding
 - Persistent table catalog with named, versioned schemas and duplicate detection
 - Typed table rows with schema-bound insert, read, scan, and delete operations
@@ -80,14 +81,17 @@ currently accepted `SELECT` grammar and logical plan. [docs/SQL_EXECUTION.md](do
 documents binding and end-to-end execution.
 [docs/DOCKER.md](docs/DOCKER.md) provides the container build, persistence,
 and interactive-shell workflow. [docs/BENCHMARKS.md](docs/BENCHMARKS.md)
-documents the repeatable performance harness and its JSON output.
+documents the repeatable performance harness and its JSON output. The
+[B+ tree notes](docs/BPLUS_TREE.md) define the durable leaf format, validation,
+and current routing boundary.
 
 ## Architecture roadmap
 
 - [x] Checksummed slotted pages and heap files
 - [x] Clock-sweep buffer pool with dirty-page eviction
 - [x] Heap record IDs, multi-page insertion, deletion, and scans
-- [ ] B+ tree indexes
+- [x] Persistent B+ tree leaf nodes, splits, duplicates, and range traversal
+- [ ] B+ tree internal nodes, catalog ownership, and planner integration
 - [x] Typed tuple encoding and corruption validation
 - [x] Catalog metadata and schema persistence
 - [x] Typed table rows with logical table isolation

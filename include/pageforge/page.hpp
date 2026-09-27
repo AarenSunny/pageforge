@@ -43,6 +43,7 @@ class SlottedPage {
 
   SlotId insert(std::span<const std::byte> record);
   [[nodiscard]] std::vector<std::byte> read(SlotId slot_id) const;
+  void replace(SlotId slot_id, std::span<const std::byte> record);
   bool erase(SlotId slot_id);
   void compact();
   void validate() const;

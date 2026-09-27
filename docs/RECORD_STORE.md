@@ -2,7 +2,8 @@
 
 `RecordStore` is the record-level layer over the heap file and buffer pool. It
 returns a stable `RecordId { page_id, slot_id }` for each variable-length byte
-record, and supports `insert`, `read`, `erase`, and an ordered full `scan`.
+record, and supports `insert`, `read`, stable-ID `replace`, `erase`, and an
+ordered full `scan`.
 
 ```cpp
 auto heap = pageforge::HeapFile::create("example.db");
@@ -10,6 +11,7 @@ pageforge::BufferPool pool(heap, 64);
 pageforge::RecordStore records(pool);
 auto id = records.insert(payload);
 auto bytes = records.read(id);
+records.replace(id, replacement_payload);
 auto cursor = records.cursor();
 while (auto next = cursor.next()) {
     // Process next->id and next->bytes one record at a time.
@@ -21,6 +23,12 @@ Insertion searches existing pages in page-ID order, so a deletion can release
 space for future records. A page compacts itself if needed, keeping live slot
 IDs stable. If no page fits, the store allocates a new one. The current search
 is linear in the number of pages; a free-space map is a planned optimization.
+
+Replacement rebuilds the page payload region while preserving the target slot
+and every neighboring slot. It checks total capacity before changing bytes, so
+an oversized replacement throws `PageFull` and leaves the original record
+intact. The B+ tree leaf layer uses fixed-size records to make this stable-ID
+rewrite predictable.
 
 `cursor().next()` returns one live record at a time in `(page_id, slot_id)` order
 and omits tombstones. It holds no page pin between calls, so even a one-frame

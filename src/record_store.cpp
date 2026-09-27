@@ -50,6 +50,12 @@ std::vector<std::byte> RecordStore::read(RecordId id) {
   return guard.page().read(id.slot_id);
 }
 
+void RecordStore::replace(RecordId id, std::span<const std::byte> bytes) {
+  if (id.page_id >= pool_.page_count()) throw std::out_of_range("record page does not exist");
+  auto guard = pool_.fetch(id.page_id);
+  guard.mutable_page().replace(id.slot_id, bytes);
+}
+
 bool RecordStore::erase(RecordId id) {
   if (id.page_id >= pool_.page_count()) return false;
   auto guard = pool_.fetch(id.page_id);
