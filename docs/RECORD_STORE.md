@@ -27,8 +27,8 @@ is linear in the number of pages; a free-space map is a planned optimization.
 Replacement rebuilds the page payload region while preserving the target slot
 and every neighboring slot. It checks total capacity before changing bytes, so
 an oversized replacement throws `PageFull` and leaves the original record
-intact. The B+ tree leaf layer uses fixed-size records to make this stable-ID
-rewrite predictable.
+intact. The B+ tree uses fixed-size records to make this stable-ID rewrite
+predictable for leaf and internal nodes.
 
 `cursor().next()` returns one live record at a time in `(page_id, slot_id)` order
 and omits tombstones. It holds no page pin between calls, so even a one-frame

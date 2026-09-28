@@ -1131,7 +1131,7 @@ void sql_execution_rejects_binding_errors() {
   std::filesystem::remove(path);
 }
 
-void bplus_leaf_index_splits_ranges_and_reopens() {
+void bplus_tree_routes_splits_ranges_and_reopens() {
   const auto path = std::filesystem::temp_directory_path() / "pageforge-bplus-leaves-test.db";
   std::filesystem::remove(path);
   RecordId header_id{};
@@ -1141,6 +1141,8 @@ void bplus_leaf_index_splits_ranges_and_reopens() {
     RecordStore records(pool);
     auto index = BPlusTreeIndex::create(records);
     header_id = index.header_id();
+    check(index.height() == 1 && index.root_id() == RecordId{0, 0},
+          "new index should begin as a single root leaf");
 
     for (std::int64_t position = 0; position < 400; ++position) {
       const auto key = (position * 137) % 400;
@@ -1155,6 +1157,8 @@ void bplus_leaf_index_splits_ranges_and_reopens() {
               index.insert(std::numeric_limits<std::int64_t>::max(), {200, 2}),
           "signed key extremes should be ordered without narrowing");
     check(index.leaf_count() >= 4, "capacity overflow should split the persistent leaf chain");
+    check(index.height() == 2 && index.root_id() != RecordId{0, 0},
+          "the first leaf split should promote a durable internal root");
 
     const auto matches = index.find(42);
     check(matches == std::vector<RecordId>{{10, 42}, {99, 1}, {99, 2}},
@@ -1180,17 +1184,29 @@ void bplus_leaf_index_splits_ranges_and_reopens() {
     BufferPool pool(heap, 2);
     RecordStore records(pool);
     auto index = BPlusTreeIndex::open(records, header_id);
-    check(index.leaf_count() >= 4 && index.find(42).size() == 3,
-          "index header, leaf links, and duplicate keys should survive reopen");
+    check(index.height() == 2 && index.leaf_count() >= 4 && index.find(42).size() == 3,
+          "internal root, leaf links, and duplicate keys should survive reopen");
     const auto tail = index.range(398, std::nullopt);
     check(tail.size() == 3 && tail[0].key == 398 && tail[1].key == 399 &&
               tail[2].key == std::numeric_limits<std::int64_t>::max(),
           "reopened index should preserve upper-tail range traversal");
+    check(index.insert(42, {100, 3}) && index.find(42).size() == 4,
+          "reopened internal routing should accept and expose new duplicate-key entries");
+    pool.flush_all();
+  }
+
+  {
+    auto heap = HeapFile::open(path);
+    BufferPool pool(heap, 2);
+    RecordStore records(pool);
+    auto index = BPlusTreeIndex::open(records, header_id);
+    check(index.height() == 2 && index.find(42).size() == 4,
+          "internal-root updates should remain valid after a second reopen");
   }
   std::filesystem::remove(path);
 }
 
-void bplus_leaf_index_detects_corruption() {
+void bplus_tree_detects_corruption() {
   const auto path = std::filesystem::temp_directory_path() / "pageforge-bplus-corruption-test.db";
   std::filesystem::remove(path);
   {
@@ -1206,6 +1222,25 @@ void bplus_leaf_index_detects_corruption() {
                                   "malformed index headers should be rejected");
   }
   std::filesystem::remove(path);
+
+  const auto internal_path =
+      std::filesystem::temp_directory_path() / "pageforge-bplus-internal-corruption-test.db";
+  std::filesystem::remove(internal_path);
+  {
+    auto heap = HeapFile::create(internal_path);
+    BufferPool pool(heap, 3);
+    RecordStore records(pool);
+    auto index = BPlusTreeIndex::create(records);
+    for (std::int64_t key = 0; key <= static_cast<std::int64_t>(pageforge::kBPlusLeafCapacity);
+         ++key) {
+      (void)index.insert(key, {300, static_cast<pageforge::SlotId>(key)});
+    }
+    check(index.height() == 2, "leaf overflow should create an internal root before corruption test");
+    records.replace(index.root_id(), bytes("not an internal node"));
+    check_throws<IndexCorruption>([&] { (void)index.leaf_count(); },
+                                  "malformed internal roots should be rejected");
+  }
+  std::filesystem::remove(internal_path);
 
   const auto missing_path =
       std::filesystem::temp_directory_path() / "pageforge-bplus-missing-header-test.db";
@@ -1260,8 +1295,8 @@ int main() {
       {"SQL parser invalid statements", sql_parser_rejects_invalid_statements},
       {"SQL binding and execution", sql_execution_binds_and_streams_results},
       {"SQL binding validation", sql_execution_rejects_binding_errors},
-      {"B+ leaf splits, ranges, and reopen", bplus_leaf_index_splits_ranges_and_reopens},
-      {"B+ leaf corruption detection", bplus_leaf_index_detects_corruption},
+      {"B+ tree routing, splits, ranges, and reopen", bplus_tree_routes_splits_ranges_and_reopens},
+      {"B+ tree corruption detection", bplus_tree_detects_corruption},
   };
   std::size_t passed = 0;
   for (const auto& [name, test] : tests) {

@@ -12,6 +12,7 @@
 namespace pageforge {
 
 inline constexpr std::size_t kBPlusLeafCapacity = 128;
+inline constexpr std::size_t kBPlusInternalCapacity = 128;
 
 struct IndexEntry {
   std::int64_t key;
@@ -35,6 +36,8 @@ class BPlusTreeIndex {
   BPlusTreeIndex(BPlusTreeIndex&&) noexcept = default;
 
   [[nodiscard]] RecordId header_id() const noexcept { return header_id_; }
+  [[nodiscard]] RecordId root_id() const noexcept { return root_; }
+  [[nodiscard]] std::size_t height() const noexcept { return height_; }
   [[nodiscard]] std::size_t leaf_count();
   bool insert(std::int64_t key, RecordId value);
   [[nodiscard]] std::vector<RecordId> find(std::int64_t key);
@@ -42,12 +45,16 @@ class BPlusTreeIndex {
                                               std::optional<std::int64_t> upper);
 
  private:
-  BPlusTreeIndex(RecordStore& records, RecordId header_id, RecordId first_leaf)
-      : records_(records), header_id_(header_id), first_leaf_(first_leaf) {}
+  BPlusTreeIndex(RecordStore& records, RecordId header_id, RecordId root, RecordId first_leaf,
+                 std::size_t height)
+      : records_(records), header_id_(header_id), root_(root), first_leaf_(first_leaf),
+        height_(height) {}
 
   RecordStore& records_;
   RecordId header_id_;
+  RecordId root_;
   RecordId first_leaf_;
+  std::size_t height_;
 };
 
 }  // namespace pageforge
