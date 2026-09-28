@@ -17,7 +17,7 @@ compaction, a durable heap file, a buffer manager, and typed catalog metadata.
 - Durable page allocation, reads, writes, flushing, and reopen
 - Clock-sweep buffer pool with RAII pin guards and dirty-page eviction
 - Multi-page record store with stable-ID replacement, deletion, and scans
-- Height-two B+ tree with internal routing, leaf splits, and range scans
+- Height-two B+ tree with routing, splits, exact deletion, and range scans
 - Portable typed tuples with integers, text, booleans, nulls, and strict decoding
 - Persistent table catalog with named, versioned schemas and duplicate detection
 - Typed table rows with schema-bound insert, read, scan, and delete operations
@@ -90,7 +90,7 @@ and current routing boundary.
 - [x] Checksummed slotted pages and heap files
 - [x] Clock-sweep buffer pool with dirty-page eviction
 - [x] Heap record IDs, multi-page insertion, deletion, and scans
-- [x] Persistent B+ tree leaves, internal root routing, and range traversal
+- [x] B+ tree routing, leaf splits/deletion, root promotion/collapse, and ranges
 - [ ] Recursive internal splits, catalog ownership, and planner integration
 - [x] Typed tuple encoding and corruption validation
 - [x] Catalog metadata and schema persistence

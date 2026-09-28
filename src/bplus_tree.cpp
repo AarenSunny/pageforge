@@ -437,6 +437,71 @@ bool BPlusTreeIndex::insert(std::int64_t key, RecordId value) {
   return true;
 }
 
+bool BPlusTreeIndex::erase(std::int64_t key, RecordId value) {
+  const IndexEntry entry{key, value};
+  if (height_ == 1) {
+    auto leaf = load_leaf(records_, root_);
+    const auto position = std::lower_bound(leaf.entries.begin(), leaf.entries.end(), entry, entry_less);
+    if (position == leaf.entries.end() || *position != entry) return false;
+    leaf.entries.erase(position);
+    records_.replace(root_, encode_leaf(leaf));
+    return true;
+  }
+
+  auto internal = load_internal(records_, root_);
+  const auto child_index = route_entry(internal, entry);
+  const auto target_id = internal.children[child_index].id;
+  auto leaf = load_leaf(records_, target_id);
+  const auto position = std::lower_bound(leaf.entries.begin(), leaf.entries.end(), entry, entry_less);
+  if (position == leaf.entries.end() || *position != entry) return false;
+  leaf.entries.erase(position);
+  if (!leaf.entries.empty()) {
+    records_.replace(target_id, encode_leaf(leaf));
+    internal.children[child_index].high = leaf.entries.back();
+    records_.replace(root_, encode_internal(internal));
+    return true;
+  }
+
+  const auto expected_next = child_index + 1 < internal.children.size()
+                                 ? std::optional<RecordId>{internal.children[child_index + 1].id}
+                                 : std::nullopt;
+  if (leaf.next != expected_next) {
+    throw IndexCorruption("empty leaf successor does not match internal root order");
+  }
+  if (child_index != 0) {
+    const auto predecessor_id = internal.children[child_index - 1].id;
+    auto predecessor = load_leaf(records_, predecessor_id);
+    if (predecessor.next != std::optional<RecordId>{target_id}) {
+      throw IndexCorruption("leaf predecessor does not point to the erased child");
+    }
+    predecessor.next = leaf.next;
+    records_.replace(predecessor_id, encode_leaf(predecessor));
+  }
+
+  if (internal.children.size() == 2) {
+    const auto remaining_index = child_index == 0 ? 1U : 0U;
+    const auto remaining_id = internal.children[remaining_index].id;
+    const auto new_first = child_index == 0 ? remaining_id : first_leaf_;
+    records_.replace(header_id_, encode_header({1, remaining_id, new_first}));
+    if (!records_.erase(root_) || !records_.erase(target_id)) {
+      throw IndexCorruption("could not retire collapsed B+ tree nodes");
+    }
+    root_ = remaining_id;
+    first_leaf_ = new_first;
+    height_ = 1;
+    return true;
+  }
+
+  internal.children.erase(internal.children.begin() + static_cast<std::ptrdiff_t>(child_index));
+  records_.replace(root_, encode_internal(internal));
+  if (child_index == 0) {
+    first_leaf_ = *leaf.next;
+    records_.replace(header_id_, encode_header({2, root_, first_leaf_}));
+  }
+  if (!records_.erase(target_id)) throw IndexCorruption("could not retire empty B+ tree leaf");
+  return true;
+}
+
 std::vector<RecordId> BPlusTreeIndex::find(std::int64_t key) {
   RecordId start = root_;
   if (height_ == 2) {

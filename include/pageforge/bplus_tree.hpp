@@ -40,6 +40,7 @@ class BPlusTreeIndex {
   [[nodiscard]] std::size_t height() const noexcept { return height_; }
   [[nodiscard]] std::size_t leaf_count();
   bool insert(std::int64_t key, RecordId value);
+  bool erase(std::int64_t key, RecordId value);
   [[nodiscard]] std::vector<RecordId> find(std::int64_t key);
   [[nodiscard]] std::vector<IndexEntry> range(std::optional<std::int64_t> lower,
                                               std::optional<std::int64_t> upper);

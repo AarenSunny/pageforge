@@ -1255,6 +1255,67 @@ void bplus_tree_detects_corruption() {
   std::filesystem::remove(missing_path);
 }
 
+void bplus_tree_deletes_repairs_and_collapses() {
+  const auto path = std::filesystem::temp_directory_path() / "pageforge-bplus-delete-test.db";
+  std::filesystem::remove(path);
+  RecordId header_id{};
+  std::size_t removed = 0;
+  {
+    auto heap = HeapFile::create(path);
+    BufferPool pool(heap, 4);
+    RecordStore records(pool);
+    auto index = BPlusTreeIndex::create(records);
+    header_id = index.header_id();
+    for (std::int64_t key = 0; key < 400; ++key) {
+      (void)index.insert(key, {400, static_cast<pageforge::SlotId>(key)});
+    }
+    const auto initial_leaves = index.leaf_count();
+    check(index.height() == 2 && initial_leaves > 2,
+          "deletion test should begin with a multi-leaf internal root");
+    while (index.leaf_count() == initial_leaves) {
+      check(index.erase(static_cast<std::int64_t>(removed),
+                        {400, static_cast<pageforge::SlotId>(removed)}),
+            "existing first-leaf entry should be erased");
+      ++removed;
+    }
+    const auto remaining = index.range(std::nullopt, std::nullopt);
+    check(index.height() == 2 && index.leaf_count() == initial_leaves - 1 &&
+              remaining.size() == 400 - removed &&
+              remaining.front().key == static_cast<std::int64_t>(removed),
+          "empty first leaf should be unlinked and root children repaired");
+    pool.flush_all();
+  }
+
+  {
+    auto heap = HeapFile::open(path);
+    BufferPool pool(heap, 4);
+    RecordStore records(pool);
+    auto index = BPlusTreeIndex::open(records, header_id);
+    const auto remaining = index.range(std::nullopt, std::nullopt);
+    for (const auto& entry : remaining) {
+      check(index.erase(entry.key, entry.value),
+            "reopened index should erase every remaining routed entry");
+    }
+    check(index.height() == 1 && index.leaf_count() == 1 &&
+              index.range(std::nullopt, std::nullopt).empty(),
+          "deleting through underflow should collapse the root to one empty leaf");
+    check(!index.erase(7, {400, 7}), "erasing a missing exact entry should be idempotent");
+    check(index.insert(-1, {401, 1}) && index.find(-1) == std::vector<RecordId>{{401, 1}},
+          "collapsed empty tree should accept new entries");
+    pool.flush_all();
+  }
+
+  {
+    auto heap = HeapFile::open(path);
+    BufferPool pool(heap, 2);
+    RecordStore records(pool);
+    auto index = BPlusTreeIndex::open(records, header_id);
+    check(index.height() == 1 && index.find(-1) == std::vector<RecordId>{{401, 1}},
+          "collapsed root and subsequent insert should survive reopen");
+  }
+  std::filesystem::remove(path);
+}
+
 }  // namespace
 
 int main() {
@@ -1297,6 +1358,7 @@ int main() {
       {"SQL binding validation", sql_execution_rejects_binding_errors},
       {"B+ tree routing, splits, ranges, and reopen", bplus_tree_routes_splits_ranges_and_reopens},
       {"B+ tree corruption detection", bplus_tree_detects_corruption},
+      {"B+ tree deletion and root collapse", bplus_tree_deletes_repairs_and_collapses},
   };
   std::size_t passed = 0;
   for (const auto& [name, test] : tests) {
