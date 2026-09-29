@@ -20,6 +20,7 @@ compaction, a durable heap file, a buffer manager, and typed catalog metadata.
 - Height-two B+ tree with routing, splits, exact deletion, and range scans
 - Portable typed tuples with integers, text, booleans, nulls, and strict decoding
 - Persistent table catalog with named, versioned schemas and duplicate detection
+- Persistent B+ tree catalog ownership bound to validated integer columns
 - Typed table rows with schema-bound insert, read, scan, and delete operations
 - Streaming record and typed-table cursors without materializing row sets
 - Composable filter, stable sort, projection, and limit query operators
@@ -72,8 +73,8 @@ The test suite writes only temporary heap files and removes them afterward. See
 rules, [docs/BUFFER_POOL.md](docs/BUFFER_POOL.md) for caching and writeback, and
 [docs/RECORD_STORE.md](docs/RECORD_STORE.md) for record-level behavior. The
 [tuple-format notes](docs/TUPLES.md) document typed row encoding and its schema
-contract, while [docs/CATALOG.md](docs/CATALOG.md) describes persisted table
-definitions. [docs/TABLE_STORE.md](docs/TABLE_STORE.md) shows the typed-table
+contract, while [docs/CATALOG.md](docs/CATALOG.md) describes persisted table and
+index definitions. [docs/TABLE_STORE.md](docs/TABLE_STORE.md) shows the typed-table
 API and row envelope. [docs/QUERY_EXECUTION.md](docs/QUERY_EXECUTION.md)
 demonstrates the composable streaming query pipeline; [docs/SQL_LEXER.md](docs/SQL_LEXER.md)
 describes tokenization, and [docs/SQL_PARSER.md](docs/SQL_PARSER.md) defines the
@@ -91,7 +92,8 @@ and current routing boundary.
 - [x] Clock-sweep buffer pool with dirty-page eviction
 - [x] Heap record IDs, multi-page insertion, deletion, and scans
 - [x] B+ tree routing, leaf splits/deletion, root promotion/collapse, and ranges
-- [ ] Recursive internal splits, catalog ownership, and planner integration
+- [x] Persistent catalog ownership for validated B+ tree indexes
+- [ ] Recursive internal splits and index-aware planner integration
 - [x] Typed tuple encoding and corruption validation
 - [x] Catalog metadata and schema persistence
 - [x] Typed table rows with logical table isolation

@@ -20,6 +20,15 @@ struct TableDefinition {
   bool operator==(const TableDefinition&) const = default;
 };
 
+struct IndexDefinition {
+  std::string name;
+  std::string table;
+  std::string column;
+  RecordId header_id;
+
+  bool operator==(const IndexDefinition&) const = default;
+};
+
 class CatalogCorruption final : public std::runtime_error {
  public:
   using std::runtime_error::runtime_error;
@@ -32,6 +41,9 @@ class Catalog {
   [[nodiscard]] RecordId create_table(const TableDefinition& table);
   [[nodiscard]] std::optional<TableDefinition> find_table(std::string_view name);
   [[nodiscard]] std::vector<TableDefinition> list_tables();
+  [[nodiscard]] RecordId register_index(const IndexDefinition& index);
+  [[nodiscard]] std::optional<IndexDefinition> find_index(std::string_view name);
+  [[nodiscard]] std::vector<IndexDefinition> list_indexes();
 
  private:
   RecordStore& records_;

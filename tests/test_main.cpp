@@ -39,6 +39,7 @@ using pageforge::TupleCodec;
 using pageforge::TupleCorruption;
 using pageforge::Catalog;
 using pageforge::CatalogCorruption;
+using pageforge::IndexDefinition;
 using pageforge::TableStore;
 using pageforge::TableCorruption;
 using pageforge::Query;
@@ -589,6 +590,98 @@ void catalog_detects_corrupt_metadata() {
     Catalog catalog(records);
     check_throws<CatalogCorruption>([&] { (void)catalog.list_tables(); },
                                     "truncated reserved catalog record should fail");
+  }
+  std::filesystem::remove(truncated_path);
+}
+
+void catalog_persists_index_ownership() {
+  const auto path = std::filesystem::temp_directory_path() / "pageforge-index-catalog-test.db";
+  std::filesystem::remove(path);
+  RecordId header_id{};
+  const IndexDefinition expected{"people_id_idx", "people", "id", {}};
+  {
+    auto heap = HeapFile::create(path);
+    BufferPool pool(heap, 3);
+    RecordStore records(pool);
+    Catalog catalog(records);
+    (void)catalog.create_table({"people", people_schema(), 1});
+    auto index = BPlusTreeIndex::create(records);
+    header_id = index.header_id();
+    check(index.insert(7, {42, 1}) && index.insert(9, {42, 2}),
+          "catalog-owned index should accept entries before registration");
+    auto definition = expected;
+    definition.header_id = header_id;
+    (void)catalog.register_index(definition);
+    check(catalog.find_index("people_id_idx") == definition,
+          "registered index should be immediately discoverable");
+    check(!catalog.find_index("missing"), "unknown index should return no definition");
+    check(catalog.list_indexes() == std::vector<IndexDefinition>{definition},
+          "index catalog should preserve creation order and ownership");
+    pool.flush_all();
+  }
+  {
+    auto heap = HeapFile::open(path);
+    BufferPool pool(heap, 2);
+    RecordStore records(pool);
+    Catalog catalog(records);
+    auto definition = expected;
+    definition.header_id = header_id;
+    check(catalog.find_index("people_id_idx") == definition,
+          "index ownership should survive database reopen");
+    auto index = BPlusTreeIndex::open(records, definition.header_id);
+    check(index.find(7) == std::vector<RecordId>{{42, 1}} &&
+              index.find(9) == std::vector<RecordId>{{42, 2}},
+          "persisted catalog header should reopen the owned B+ tree");
+  }
+  std::filesystem::remove(path);
+}
+
+void catalog_validates_index_definitions() {
+  const auto path = std::filesystem::temp_directory_path() / "pageforge-index-catalog-validation-test.db";
+  std::filesystem::remove(path);
+  {
+    auto heap = HeapFile::create(path);
+    BufferPool pool(heap, 3);
+    RecordStore records(pool);
+    Catalog catalog(records);
+    (void)catalog.create_table({"people", people_schema(), 1});
+    auto index = BPlusTreeIndex::create(records);
+    const IndexDefinition valid{"people_id_idx", "people", "id", index.header_id()};
+    check_throws<std::invalid_argument>(
+        [&] { (void)catalog.register_index({"", "people", "id", index.header_id()}); },
+        "empty index names should fail");
+    check_throws<std::invalid_argument>(
+        [&] { (void)catalog.register_index({"missing_table_idx", "missing", "id", index.header_id()}); },
+        "indexes should reference an existing table");
+    check_throws<std::invalid_argument>(
+        [&] { (void)catalog.register_index({"missing_column_idx", "people", "missing", index.header_id()}); },
+        "indexes should reference an existing column");
+    check_throws<std::invalid_argument>(
+        [&] { (void)catalog.register_index({"people_name_idx", "people", "name", index.header_id()}); },
+        "B+ tree indexes should reject non-integer columns");
+    check_throws<IndexCorruption>(
+        [&] { (void)catalog.register_index({"bad_header_idx", "people", "id", {999, 0}}); },
+        "index metadata should reject an invalid tree header");
+    const auto metadata_id = catalog.register_index(valid);
+    check_throws<std::invalid_argument>([&] { (void)catalog.register_index(valid); },
+                                        "duplicate index names should fail");
+    (void)records.insert(records.read(metadata_id));
+    check_throws<CatalogCorruption>([&] { (void)catalog.list_indexes(); },
+                                    "duplicate persisted index names should be corruption");
+  }
+  std::filesystem::remove(path);
+
+  const auto truncated_path =
+      std::filesystem::temp_directory_path() / "pageforge-index-catalog-truncated-test.db";
+  std::filesystem::remove(truncated_path);
+  {
+    auto heap = HeapFile::create(truncated_path);
+    BufferPool pool(heap, 1);
+    RecordStore records(pool);
+    (void)records.insert(bytes("PFX1"));
+    Catalog catalog(records);
+    check_throws<CatalogCorruption>([&] { (void)catalog.list_indexes(); },
+                                    "truncated reserved index metadata should fail");
   }
   std::filesystem::remove(truncated_path);
 }
@@ -1343,6 +1436,8 @@ int main() {
       {"catalog schema persistence", catalog_persists_table_schemas},
       {"catalog definition validation", catalog_validates_definitions},
       {"catalog corruption detection", catalog_detects_corrupt_metadata},
+      {"catalog index ownership persistence", catalog_persists_index_ownership},
+      {"catalog index definition validation", catalog_validates_index_definitions},
       {"typed table persistence and isolation", typed_tables_persist_and_isolate_rows},
       {"typed table input and ownership validation", typed_tables_validate_input_and_ownership},
       {"typed table corruption detection", typed_tables_detect_corrupt_envelopes},

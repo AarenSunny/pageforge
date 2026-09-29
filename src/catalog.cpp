@@ -1,5 +1,7 @@
 #include "pageforge/catalog.hpp"
 
+#include "pageforge/bplus_tree.hpp"
+
 #include <algorithm>
 #include <array>
 #include <limits>
@@ -10,7 +12,10 @@
 namespace pageforge {
 namespace {
 
-constexpr std::array<std::byte, 4> kMagic{std::byte{'P'}, std::byte{'F'}, std::byte{'C'}, std::byte{'1'}};
+constexpr std::array<std::byte, 4> kTableMagic{std::byte{'P'}, std::byte{'F'}, std::byte{'C'},
+                                               std::byte{'1'}};
+constexpr std::array<std::byte, 4> kIndexMagic{std::byte{'P'}, std::byte{'F'}, std::byte{'X'},
+                                               std::byte{'1'}};
 constexpr std::uint16_t kFormatVersion = 1;
 constexpr std::uint8_t kNullable = 1;
 
@@ -123,7 +128,7 @@ DataType decode_type(std::byte byte) {
 
 std::vector<std::byte> encode(const TableDefinition& table) {
   validate_table(table);
-  std::vector<std::byte> output(kMagic.begin(), kMagic.end());
+  std::vector<std::byte> output(kTableMagic.begin(), kTableMagic.end());
   append_u16(output, kFormatVersion);
   append_u32(output, table.schema_version);
   append_text(output, table.name);
@@ -136,12 +141,12 @@ std::vector<std::byte> encode(const TableDefinition& table) {
   return output;
 }
 
-bool has_magic(std::span<const std::byte> bytes) {
-  return bytes.size() >= kMagic.size() && std::equal(kMagic.begin(), kMagic.end(), bytes.begin());
+bool has_magic(std::span<const std::byte> bytes, std::span<const std::byte> magic) {
+  return bytes.size() >= magic.size() && std::equal(magic.begin(), magic.end(), bytes.begin());
 }
 
 TableDefinition decode(std::span<const std::byte> bytes) {
-  std::size_t offset = kMagic.size();
+  std::size_t offset = kTableMagic.size();
   if (read_u16(bytes, offset) != kFormatVersion) throw CatalogCorruption("unsupported catalog format version");
   TableDefinition table;
   table.schema_version = read_u32(bytes, offset);
@@ -166,6 +171,49 @@ TableDefinition decode(std::span<const std::byte> bytes) {
   return table;
 }
 
+void validate_index_identifiers(const IndexDefinition& index) {
+  const std::array<std::pair<std::string_view, std::string_view>, 3> identifiers{{
+      {index.name, "index name"}, {index.table, "index table name"}, {index.column, "index column name"}}};
+  for (const auto& [value, label] : identifiers) {
+    if (value.empty()) throw std::invalid_argument(std::string(label) + " must not be empty");
+    if (value.size() > std::numeric_limits<std::uint16_t>::max()) {
+      throw std::invalid_argument(std::string(label) + " is too long");
+    }
+  }
+}
+
+std::vector<std::byte> encode_index(const IndexDefinition& index) {
+  validate_index_identifiers(index);
+  std::vector<std::byte> output(kIndexMagic.begin(), kIndexMagic.end());
+  append_u16(output, kFormatVersion);
+  append_u16(output, 0);
+  append_u32(output, index.header_id.page_id);
+  append_u16(output, index.header_id.slot_id);
+  append_u16(output, 0);
+  append_text(output, index.name);
+  append_text(output, index.table);
+  append_text(output, index.column);
+  return output;
+}
+
+IndexDefinition decode_index(std::span<const std::byte> bytes) {
+  std::size_t offset = kIndexMagic.size();
+  if (read_u16(bytes, offset) != kFormatVersion) {
+    throw CatalogCorruption("unsupported index catalog format version");
+  }
+  if (read_u16(bytes, offset) != 0) throw CatalogCorruption("index catalog entry has unknown flags");
+  const auto page_id = read_u32(bytes, offset);
+  const auto slot_id = read_u16(bytes, offset);
+  if (read_u16(bytes, offset) != 0) throw CatalogCorruption("index catalog entry has invalid padding");
+  IndexDefinition index{read_text(bytes, offset), read_text(bytes, offset), read_text(bytes, offset),
+                        {page_id, slot_id}};
+  if (index.name.empty() || index.table.empty() || index.column.empty()) {
+    throw CatalogCorruption("index catalog entry has an empty identifier");
+  }
+  if (offset != bytes.size()) throw CatalogCorruption("index catalog entry has trailing bytes");
+  return index;
+}
+
 }  // namespace
 
 RecordId Catalog::create_table(const TableDefinition& table) {
@@ -180,7 +228,7 @@ std::optional<TableDefinition> Catalog::find_table(std::string_view name) {
   std::unordered_set<std::string> names;
   auto cursor = records_.cursor();
   while (auto record = cursor.next()) {
-    if (!has_magic(record->bytes)) continue;
+    if (!has_magic(record->bytes, kTableMagic)) continue;
     auto table = decode(record->bytes);
     if (!names.insert(table.name).second) throw CatalogCorruption("catalog contains duplicate table names");
     if (table.name == name) found = std::move(table);
@@ -193,12 +241,54 @@ std::vector<TableDefinition> Catalog::list_tables() {
   std::unordered_set<std::string> names;
   auto cursor = records_.cursor();
   while (auto record = cursor.next()) {
-    if (!has_magic(record->bytes)) continue;
+    if (!has_magic(record->bytes, kTableMagic)) continue;
     auto table = decode(record->bytes);
     if (!names.insert(table.name).second) throw CatalogCorruption("catalog contains duplicate table names");
     tables.push_back(std::move(table));
   }
   return tables;
+}
+
+RecordId Catalog::register_index(const IndexDefinition& index) {
+  validate_index_identifiers(index);
+  if (find_index(index.name)) throw std::invalid_argument("index already exists");
+  const auto table = find_table(index.table);
+  if (!table) throw std::invalid_argument("index table does not exist");
+  const auto column = std::find_if(table->schema.begin(), table->schema.end(), [&](const auto& candidate) {
+    return candidate.name == index.column;
+  });
+  if (column == table->schema.end()) throw std::invalid_argument("index column does not exist");
+  if (column->type != DataType::Integer) {
+    throw std::invalid_argument("B+ tree indexes require an integer column");
+  }
+  (void)BPlusTreeIndex::open(records_, index.header_id);
+  return records_.insert(encode_index(index));
+}
+
+std::optional<IndexDefinition> Catalog::find_index(std::string_view name) {
+  std::optional<IndexDefinition> found;
+  std::unordered_set<std::string> names;
+  auto cursor = records_.cursor();
+  while (auto record = cursor.next()) {
+    if (!has_magic(record->bytes, kIndexMagic)) continue;
+    auto index = decode_index(record->bytes);
+    if (!names.insert(index.name).second) throw CatalogCorruption("catalog contains duplicate index names");
+    if (index.name == name) found = std::move(index);
+  }
+  return found;
+}
+
+std::vector<IndexDefinition> Catalog::list_indexes() {
+  std::vector<IndexDefinition> indexes;
+  std::unordered_set<std::string> names;
+  auto cursor = records_.cursor();
+  while (auto record = cursor.next()) {
+    if (!has_magic(record->bytes, kIndexMagic)) continue;
+    auto index = decode_index(record->bytes);
+    if (!names.insert(index.name).second) throw CatalogCorruption("catalog contains duplicate index names");
+    indexes.push_back(std::move(index));
+  }
+  return indexes;
 }
 
 }  // namespace pageforge
