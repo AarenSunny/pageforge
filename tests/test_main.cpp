@@ -768,6 +768,88 @@ void typed_tables_validate_input_and_ownership() {
   std::filesystem::remove(path);
 }
 
+void typed_tables_maintain_registered_indexes() {
+  const auto path = std::filesystem::temp_directory_path() / "pageforge-table-index-test.db";
+  std::filesystem::remove(path);
+  RecordId second_id{};
+  {
+    auto heap = HeapFile::create(path);
+    BufferPool pool(heap, 4);
+    RecordStore records(pool);
+    Catalog catalog(records);
+    (void)catalog.create_table({"items", {{"id", pageforge::DataType::Integer, false},
+                                           {"score", pageforge::DataType::Integer, true},
+                                           {"name", pageforge::DataType::Text, false}},
+                                1});
+    auto id_index = BPlusTreeIndex::create(records);
+    auto score_index = BPlusTreeIndex::create(records);
+    (void)catalog.register_index({"items_id_idx", "items", "id", id_index.header_id()});
+    (void)catalog.register_index({"items_score_idx", "items", "score", score_index.header_id()});
+
+    TableStore tables(records, catalog);
+    const auto first_id = tables.insert("items", {std::int64_t{7}, std::int64_t{100},
+                                                   std::string("seven")});
+    second_id = tables.insert("items", {std::int64_t{8}, std::monostate{}, std::string("eight")});
+    auto current_id_index = BPlusTreeIndex::open(records, id_index.header_id());
+    auto current_score_index = BPlusTreeIndex::open(records, score_index.header_id());
+    check(current_id_index.find(7) == std::vector<RecordId>{first_id} &&
+              current_id_index.find(8) == std::vector<RecordId>{second_id},
+          "table inserts should add each non-null integer key to its owned index");
+    check(current_score_index.find(100) == std::vector<RecordId>{first_id} &&
+              current_score_index.range(std::nullopt, std::nullopt).size() == 1,
+          "nullable index columns should omit null values");
+    check(tables.erase("items", first_id), "indexed table row should be deletable");
+    auto deleted_id_index = BPlusTreeIndex::open(records, id_index.header_id());
+    auto deleted_score_index = BPlusTreeIndex::open(records, score_index.header_id());
+    check(deleted_id_index.find(7).empty() && deleted_score_index.find(100).empty(),
+          "table deletion should remove every indexed key for the row");
+    pool.flush_all();
+  }
+  {
+    auto heap = HeapFile::open(path);
+    BufferPool pool(heap, 3);
+    RecordStore records(pool);
+    Catalog catalog(records);
+    const auto definition = catalog.find_index("items_id_idx");
+    check(definition.has_value(), "owned index metadata should survive with indexed rows");
+    auto id_index = BPlusTreeIndex::open(records, definition->header_id);
+    check(id_index.find(8) == std::vector<RecordId>{second_id},
+          "automatic index maintenance should survive database reopen");
+    TableStore tables(records, catalog);
+    check(tables.erase("items", second_id), "reopened table should maintain its index on delete");
+    auto empty_id_index = BPlusTreeIndex::open(records, definition->header_id);
+    check(empty_id_index.range(std::nullopt, std::nullopt).empty(),
+          "reopened index should be empty after deleting its final row");
+  }
+  std::filesystem::remove(path);
+}
+
+void typed_tables_reject_corrupt_owned_indexes_before_writes() {
+  const auto path = std::filesystem::temp_directory_path() / "pageforge-table-index-corruption-test.db";
+  std::filesystem::remove(path);
+  {
+    auto heap = HeapFile::create(path);
+    BufferPool pool(heap, 3);
+    RecordStore records(pool);
+    Catalog catalog(records);
+    (void)catalog.create_table({"events", {{"id", pageforge::DataType::Integer, false}}, 1});
+    auto index = BPlusTreeIndex::create(records);
+    (void)catalog.register_index({"events_id_idx", "events", "id", index.header_id()});
+    TableStore tables(records, catalog);
+    const auto existing = tables.insert("events", {std::int64_t{1}});
+    records.replace(index.header_id(), bytes("broken index header"));
+    check_throws<IndexCorruption>([&] { (void)tables.insert("events", {std::int64_t{2}}); },
+                                  "insert should validate every owned index before writing a row");
+    check(tables.scan("events").size() == 1,
+          "rejected indexed insert should not leave an unindexed table row");
+    check_throws<IndexCorruption>([&] { (void)tables.erase("events", existing); },
+                                  "delete should validate every owned index before changing data");
+    check(tables.read("events", existing) == pageforge::Tuple{std::int64_t{1}},
+          "rejected indexed delete should leave the table row intact");
+  }
+  std::filesystem::remove(path);
+}
+
 void typed_tables_detect_corrupt_envelopes() {
   const auto path = std::filesystem::temp_directory_path() / "pageforge-tables-corruption-test.db";
   std::filesystem::remove(path);
@@ -1440,6 +1522,8 @@ int main() {
       {"catalog index definition validation", catalog_validates_index_definitions},
       {"typed table persistence and isolation", typed_tables_persist_and_isolate_rows},
       {"typed table input and ownership validation", typed_tables_validate_input_and_ownership},
+      {"typed table automatic index maintenance", typed_tables_maintain_registered_indexes},
+      {"typed table index corruption safety", typed_tables_reject_corrupt_owned_indexes_before_writes},
       {"typed table corruption detection", typed_tables_detect_corrupt_envelopes},
       {"query filter, projection, and limit", query_pipeline_filters_projects_and_limits},
       {"query validation and lazy limit", query_pipeline_validates_and_short_circuits},

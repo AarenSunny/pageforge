@@ -21,7 +21,7 @@ compaction, a durable heap file, a buffer manager, and typed catalog metadata.
 - Portable typed tuples with integers, text, booleans, nulls, and strict decoding
 - Persistent table catalog with named, versioned schemas and duplicate detection
 - Persistent B+ tree catalog ownership bound to validated integer columns
-- Typed table rows with schema-bound insert, read, scan, and delete operations
+- Typed table rows with schema-bound operations and automatic index maintenance
 - Streaming record and typed-table cursors without materializing row sets
 - Composable filter, stable sort, projection, and limit query operators
 - Position-aware SQL lexer with literals, comparisons, and comments
@@ -93,6 +93,7 @@ and current routing boundary.
 - [x] Heap record IDs, multi-page insertion, deletion, and scans
 - [x] B+ tree routing, leaf splits/deletion, root promotion/collapse, and ranges
 - [x] Persistent catalog ownership for validated B+ tree indexes
+- [x] Automatic B+ tree maintenance for typed-table inserts and deletes
 - [ ] Recursive internal splits and index-aware planner integration
 - [x] Typed tuple encoding and corruption validation
 - [x] Catalog metadata and schema persistence

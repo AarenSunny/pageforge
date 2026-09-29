@@ -72,9 +72,10 @@ name, but system and user records still share physical heap pages. Dedicated
 table storage will remove this temporary shared namespace.
 
 Catalog creation becomes durable at the buffer pool's explicit `flush_all()`
-boundary. Index registration records ownership; it does not backfill existing
-rows, maintain entries during table writes, or make the SQL planner select the
-index yet. Schema alteration, table or index deletion, transactional DDL, and
-concurrent catalog access are also not implemented. `schema_version` is
-persisted now so future schema operations can identify the row layout they are
-changing.
+boundary. Index registration records ownership but does not backfill existing
+rows; callers must populate the tree before registration. `TableStore` maintains
+registered indexes for subsequent inserts and deletes, but the SQL planner does
+not select them yet. Schema alteration, table or index deletion, transactional
+DDL, and concurrent catalog access are also not implemented. `schema_version`
+is persisted now so future schema operations can identify the row layout they
+are changing.

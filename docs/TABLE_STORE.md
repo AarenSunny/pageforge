@@ -3,7 +3,8 @@
 `TableStore` binds the catalog and tuple codec to the record store. A table row
 can be inserted, read by record ID, scanned, or deleted using its named table.
 The table's persisted schema validates every inserted tuple and decodes every
-returned one.
+returned one. Inserts and deletes also maintain every registered B+ tree index
+owned by the table; nullable integer columns simply omit null keys.
 
 ```cpp
 auto heap = pageforge::HeapFile::create("people.db");
@@ -27,6 +28,11 @@ while (auto next = cursor.next()) {
 pool.flush_all();
 ```
 
+If `people.id` owns a registered index, the insertion above adds an entry from
+key `7` to the returned row ID. Deleting the row removes that exact entry.
+`TableStore` opens and validates all owned indexes before changing a row, so a
+damaged tree cannot silently create unindexed data.
+
 ## Row envelope
 
 Each typed row is an ordinary heap record with this prefix, followed by the
@@ -49,11 +55,18 @@ skipped. Deletion checks ownership before tombstoning the underlying slot.
 ## Current boundaries
 
 Isolation is logical, not physical: all tables and the catalog still share the
-same heap pages. The `PFR1` and `PFC1` prefixes are reserved, so raw application
-records beginning with either prefix can collide with system formats. The
-table's `cursor()` streams decoded rows one at a time; `scan()` materializes
+same heap pages. The `PFR1`, `PFC1`, and `PFX1` prefixes are reserved, so raw
+application records beginning with one of them can collide with system formats.
+The table's `cursor()` streams decoded rows one at a time; `scan()` materializes
 them for convenience. A cursor captures the initial heap page count but is not a
 transactional snapshot of later changes to existing pages. Insertion linearly
-searches heap pages for space. There is no schema migration, transaction, or
-concurrent writer support yet. A deleted record ID can be reused by a later
-insert, so callers must not treat old IDs as permanent external keys.
+searches heap pages for space.
+
+Index registration does not backfill rows that existed beforehand; callers
+must populate the tree before registering it. Maintenance is best-effort atomic
+inside one process: a failed insert removes its row and prior index entries,
+while a failed delete restores prior entries. Without write-ahead logging, a
+process or machine crash can still interrupt a multi-record update. There is no
+schema migration, transaction, or concurrent writer support yet. A deleted
+record ID can be reused by a later insert, so callers must not treat old IDs as
+permanent external keys.

@@ -1,5 +1,7 @@
 #include "pageforge/table_store.hpp"
 
+#include "pageforge/bplus_tree.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -8,6 +10,7 @@
 #include <span>
 #include <string>
 #include <utility>
+#include <variant>
 
 namespace pageforge {
 namespace {
@@ -100,6 +103,32 @@ Tuple decode_row(const TableDefinition& table, const RowEnvelope& envelope) {
   }
 }
 
+struct OpenIndex {
+  BPlusTreeIndex tree;
+  std::optional<std::int64_t> key;
+};
+
+std::vector<OpenIndex> open_indexes(RecordStore& records, Catalog& catalog,
+                                    const TableDefinition& table, const Tuple& values) {
+  std::vector<OpenIndex> indexes;
+  for (const auto& definition : catalog.list_indexes()) {
+    if (definition.table != table.name) continue;
+    const auto column = std::find_if(table.schema.begin(), table.schema.end(), [&](const auto& candidate) {
+      return candidate.name == definition.column;
+    });
+    if (column == table.schema.end() || column->type != DataType::Integer) {
+      throw CatalogCorruption("index definition no longer matches its table schema");
+    }
+    const auto position = static_cast<std::size_t>(column - table.schema.begin());
+    std::optional<std::int64_t> key;
+    if (!std::holds_alternative<std::monostate>(values[position])) {
+      key = std::get<std::int64_t>(values[position]);
+    }
+    indexes.push_back({BPlusTreeIndex::open(records, definition.header_id), key});
+  }
+  return indexes;
+}
+
 }  // namespace
 
 TableCursor::TableCursor(RecordCursor cursor, TableDefinition table)
@@ -125,7 +154,28 @@ TableDefinition TableStore::require_table(std::string_view name) {
 RecordId TableStore::insert(std::string_view table_name, const Tuple& values) {
   const auto table = require_table(table_name);
   const auto tuple_bytes = TupleCodec::encode(table.schema, values);
-  return records_.insert(wrap(table, tuple_bytes));
+  auto indexes = open_indexes(records_, catalog_, table, values);
+  const auto id = records_.insert(wrap(table, tuple_bytes));
+  std::size_t updated = 0;
+  try {
+    for (; updated < indexes.size(); ++updated) {
+      if (indexes[updated].key && !indexes[updated].tree.insert(*indexes[updated].key, id)) {
+        throw TableCorruption("index already contains the new table row");
+      }
+    }
+  } catch (...) {
+    while (updated > 0) {
+      --updated;
+      if (!indexes[updated].key) continue;
+      try {
+        (void)indexes[updated].tree.erase(*indexes[updated].key, id);
+      } catch (const std::exception&) {
+      }
+    }
+    (void)records_.erase(id);
+    throw;
+  }
+  return id;
 }
 
 Tuple TableStore::read(std::string_view table_name, RecordId id) {
@@ -158,8 +208,29 @@ bool TableStore::erase(std::string_view table_name, RecordId id) {
   }
   const auto envelope = parse(bytes);
   if (envelope.table_name != table.name) throw std::invalid_argument("record belongs to another table");
-  (void)decode_row(table, envelope);
-  return records_.erase(id);
+  const auto values = decode_row(table, envelope);
+  auto indexes = open_indexes(records_, catalog_, table, values);
+  std::vector<std::size_t> removed;
+  try {
+    for (std::size_t index = 0; index < indexes.size(); ++index) {
+      if (indexes[index].key && indexes[index].tree.erase(*indexes[index].key, id)) {
+        removed.push_back(index);
+      }
+    }
+    if (records_.erase(id)) return true;
+  } catch (...) {
+    for (auto position = removed.rbegin(); position != removed.rend(); ++position) {
+      try {
+        (void)indexes[*position].tree.insert(*indexes[*position].key, id);
+      } catch (const std::exception&) {
+      }
+    }
+    throw;
+  }
+  for (auto position = removed.rbegin(); position != removed.rend(); ++position) {
+    (void)indexes[*position].tree.insert(*indexes[*position].key, id);
+  }
+  return false;
 }
 
 }  // namespace pageforge
