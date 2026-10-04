@@ -17,6 +17,20 @@ class ScanOperator final : public RowOperator {
   TableCursor cursor_;
 };
 
+class RowsOperator final : public RowOperator {
+ public:
+  explicit RowsOperator(std::vector<TableRow> rows) : rows_(std::move(rows)) {}
+
+  std::optional<TableRow> next() override {
+    if (next_ == rows_.size()) return std::nullopt;
+    return std::move(rows_[next_++]);
+  }
+
+ private:
+  std::vector<TableRow> rows_;
+  std::size_t next_ = 0;
+};
+
 class FilterOperator final : public RowOperator {
  public:
   FilterOperator(std::unique_ptr<RowOperator> input, RowPredicate predicate)
@@ -104,6 +118,15 @@ Query Query::from(TableStore& tables, std::string_view table_name) {
   auto cursor = tables.cursor(table_name);
   const auto column_count = cursor.column_count();
   return Query(std::make_unique<ScanOperator>(std::move(cursor)), column_count);
+}
+
+Query Query::from_rows(std::vector<TableRow> rows, std::size_t column_count) {
+  for (const auto& row : rows) {
+    if (row.values.size() != column_count) {
+      throw std::invalid_argument("source row width does not match the query schema");
+    }
+  }
+  return Query(std::make_unique<RowsOperator>(std::move(rows)), column_count);
 }
 
 Query& Query::filter(RowPredicate predicate) {

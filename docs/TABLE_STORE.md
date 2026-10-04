@@ -33,6 +33,10 @@ key `7` to the returned row ID. Deleting the row removes that exact entry.
 `TableStore` opens and validates all owned indexes before changing a row, so a
 damaged tree cannot silently create unindexed data.
 
+`lookup_index(name, key)` performs an exact signed-integer lookup and returns
+decoded `TableRow` values. It cross-checks every hit against catalog ownership,
+the row's table envelope, and the indexed column value before returning it.
+
 ## Row envelope
 
 Each typed row is an ordinary heap record with this prefix, followed by the

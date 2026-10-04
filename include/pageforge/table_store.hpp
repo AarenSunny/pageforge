@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <stdexcept>
 #include <string_view>
@@ -45,6 +46,7 @@ class TableStore {
   [[nodiscard]] Tuple read(std::string_view table_name, RecordId id);
   [[nodiscard]] TableCursor cursor(std::string_view table_name);
   [[nodiscard]] std::vector<TableRow> scan(std::string_view table_name);
+  [[nodiscard]] std::vector<TableRow> lookup_index(std::string_view index_name, std::int64_t key);
   bool erase(std::string_view table_name, RecordId id);
 
  private:

@@ -130,6 +130,31 @@ RowLess bind_order(const Schema& schema, const SqlOrder& order) {
   };
 }
 
+struct IndexLookup {
+  std::string name;
+  std::int64_t key;
+};
+
+std::optional<IndexLookup> choose_index(Catalog& catalog, const TableDefinition& table,
+                                        const std::vector<SqlPredicate>& predicates) {
+  const auto indexes = catalog.list_indexes();
+  for (const auto& predicate : predicates) {
+    if (predicate.kind != SqlPredicateKind::Comparison ||
+        predicate.comparison != SqlComparison::Equal ||
+        !std::holds_alternative<std::int64_t>(predicate.literal)) {
+      continue;
+    }
+    const auto column_index = resolve_column(table.schema, predicate.column);
+    if (table.schema[column_index].type != DataType::Integer) continue;
+    for (const auto& index : indexes) {
+      if (index.table == table.name && index.column == table.schema[column_index].name) {
+        return IndexLookup{index.name, std::get<std::int64_t>(predicate.literal)};
+      }
+    }
+  }
+  return std::nullopt;
+}
+
 }  // namespace
 
 BoundSelect bind_select(TableStore& tables, Catalog& catalog, const SelectPlan& plan) {
@@ -137,28 +162,39 @@ BoundSelect bind_select(TableStore& tables, Catalog& catalog, const SelectPlan& 
     throw SqlBindError("logical plan must select either '*' or one or more columns");
   }
   const auto table = resolve_table(catalog, plan.table);
-  auto query = Query::from(tables, table.name);
+  std::vector<RowPredicate> predicates;
+  predicates.reserve(plan.predicates.size());
   for (const auto& predicate : plan.predicates) {
-    query.filter(bind_predicate(table.schema, predicate));
+    predicates.push_back(bind_predicate(table.schema, predicate));
   }
-  if (plan.order) query.sort(bind_order(table.schema, *plan.order));
+  std::optional<RowLess> order;
+  if (plan.order) order = bind_order(table.schema, *plan.order);
 
   Schema output_schema;
+  std::optional<std::vector<std::size_t>> projection;
   if (plan.select_all) {
     output_schema = table.schema;
   } else {
-    std::vector<std::size_t> projection;
-    projection.reserve(plan.columns.size());
+    projection.emplace();
+    projection->reserve(plan.columns.size());
     output_schema.reserve(plan.columns.size());
     for (const auto& name : plan.columns) {
       const auto index = resolve_column(table.schema, name);
-      projection.push_back(index);
+      projection->push_back(index);
       output_schema.push_back(table.schema[index]);
     }
-    query.project(std::move(projection));
   }
+
+  const auto lookup = choose_index(catalog, table, plan.predicates);
+  auto query = lookup ? Query::from_rows(tables.lookup_index(lookup->name, lookup->key), table.schema.size())
+                      : Query::from(tables, table.name);
+  for (auto& predicate : predicates) query.filter(std::move(predicate));
+  if (order) query.sort(std::move(*order));
+  if (projection) query.project(std::move(*projection));
   if (plan.limit) query.limit(*plan.limit);
-  return BoundSelect(std::move(query), std::move(output_schema));
+  return BoundSelect(std::move(query), std::move(output_schema),
+                     lookup ? SelectAccessPath::IndexLookup : SelectAccessPath::TableScan,
+                     lookup ? std::optional<std::string>{lookup->name} : std::nullopt);
 }
 
 BoundSelect execute_select_sql(TableStore& tables, Catalog& catalog, std::string_view sql) {

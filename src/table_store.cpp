@@ -198,6 +198,45 @@ std::vector<TableRow> TableStore::scan(std::string_view table_name) {
   return rows;
 }
 
+std::vector<TableRow> TableStore::lookup_index(std::string_view index_name, std::int64_t key) {
+  const auto definition = catalog_.find_index(index_name);
+  if (!definition) throw std::out_of_range("index does not exist");
+  const auto table = require_table(definition->table);
+  const auto column = std::find_if(table.schema.begin(), table.schema.end(), [&](const auto& candidate) {
+    return candidate.name == definition->column;
+  });
+  if (column == table.schema.end() || column->type != DataType::Integer) {
+    throw CatalogCorruption("index definition no longer matches its table schema");
+  }
+  const auto position = static_cast<std::size_t>(column - table.schema.begin());
+  auto index = BPlusTreeIndex::open(records_, definition->header_id);
+  std::vector<TableRow> rows;
+  for (const auto id : index.find(key)) {
+    std::vector<std::byte> bytes;
+    try {
+      bytes = records_.read(id);
+    } catch (const std::out_of_range&) {
+      throw TableCorruption("index references a missing table row");
+    }
+    RowEnvelope envelope;
+    try {
+      envelope = parse(bytes);
+    } catch (const std::invalid_argument&) {
+      throw TableCorruption("index references a record that is not a table row");
+    }
+    if (envelope.table_name != table.name) {
+      throw TableCorruption("index references a row owned by another table");
+    }
+    auto values = decode_row(table, envelope);
+    if (std::holds_alternative<std::monostate>(values[position]) ||
+        std::get<std::int64_t>(values[position]) != key) {
+      throw TableCorruption("index key does not match its table row");
+    }
+    rows.push_back({id, std::move(values)});
+  }
+  return rows;
+}
+
 bool TableStore::erase(std::string_view table_name, RecordId id) {
   const auto table = require_table(table_name);
   std::vector<std::byte> bytes;

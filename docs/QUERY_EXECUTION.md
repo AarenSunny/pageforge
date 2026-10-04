@@ -30,7 +30,12 @@ fetch another row. Filter and sort receive user-defined callbacks, so null and
 comparison semantics remain explicit at this layer. `stable_sort` preserves
 the input order of equivalent rows.
 
-This is an iterator execution layer, not a SQL parser. It inherits the table
-cursor's single-threaded, non-snapshot scan behavior and the buffer pool's
-explicit durability boundary. The SQL binder translates parsed predicates and
-ordering into these operators; joins and aggregation remain planned work.
+`Query::from_rows()` supplies an owned, width-validated row set as an alternate
+source. The SQL binder uses it for exact B+ tree hits, then composes the same
+filter, sort, projection, and limit operators used by a table scan.
+
+This is an iterator execution layer, not a SQL parser. Table-backed sources
+inherit the cursor's single-threaded, non-snapshot scan behavior; owned-row
+sources are fixed when constructed. Both inherit the buffer pool's explicit
+durability boundary. The SQL binder translates parsed predicates and ordering
+into these operators; joins and aggregation remain planned work.

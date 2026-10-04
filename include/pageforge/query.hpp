@@ -24,6 +24,7 @@ class RowOperator {
 class Query {
  public:
   [[nodiscard]] static Query from(TableStore& tables, std::string_view table_name);
+  [[nodiscard]] static Query from_rows(std::vector<TableRow> rows, std::size_t column_count);
 
   Query(const Query&) = delete;
   Query& operator=(const Query&) = delete;

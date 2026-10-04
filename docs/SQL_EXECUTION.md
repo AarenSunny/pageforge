@@ -18,6 +18,25 @@ while (auto row = result.next()) {
 }
 ```
 
+For an integer equality predicate, the binder looks for a registered B+ tree
+on the resolved table and column. When one exists, only matching record IDs are
+loaded before the ordinary filter pipeline runs. All predicates—including the
+one used for lookup—are still evaluated against decoded rows, so residual
+filters and SQL null semantics remain unchanged. The selected path is visible
+without executing the query:
+
+```cpp
+if (result.access_path() == pageforge::SelectAccessPath::IndexLookup) {
+    // result.index_name() identifies the chosen persisted index.
+}
+```
+
+Index selection follows predicate order and catalog creation order. Range,
+inequality, null-test, text, and boolean predicates currently retain a table
+scan. An equality lookup validates that every index hit still exists, belongs
+to the indexed table, and contains the indexed key; stale logical entries fail
+as table corruption rather than returning the wrong row.
+
 Unquoted table and column names are resolved case-insensitively while the
 catalog's original spelling is retained in output metadata. A case-insensitive
 collision is reported as ambiguous. Unknown names, mismatched literal types,
@@ -40,6 +59,7 @@ and limit. It compares integers numerically, text by `std::string` byte order,
 and booleans with `false` before `true`; nulls sort last in both directions.
 Sorting is stable but blocking and currently keeps every filtered row in memory.
 
-Execution remains single-threaded and inherits the underlying cursor's
-non-snapshot behavior. The CLI exposes this path through its `query` command and
-formats the result as escaped, tab-separated text.
+Execution remains single-threaded. Table scans inherit the underlying cursor's
+non-snapshot behavior; index lookups materialize matching rows before the
+operator pipeline begins. The CLI exposes both paths through its `query`
+command and formats the result as escaped, tab-separated text.

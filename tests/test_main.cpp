@@ -1302,6 +1302,65 @@ void sql_execution_rejects_binding_errors() {
     auto zero = pageforge::execute_select_sql(tables, catalog, "SELECT * FROM people LIMIT 0");
     check(zero.output_schema() == people_schema() && !zero.next(),
           "bound LIMIT zero should retain output metadata without scanning rows");
+
+    auto index = BPlusTreeIndex::create(records);
+    (void)catalog.register_index({"people_id_idx", "people", "id", index.header_id()});
+    records.replace(index.header_id(), bytes("broken index header"));
+    check_throws<SqlBindError>(
+        [&] {
+          (void)pageforge::execute_select_sql(
+              tables, catalog, "SELECT missing FROM people WHERE id = 1");
+        },
+        "all names should bind before an eager index lookup reads storage");
+  }
+  std::filesystem::remove(path);
+}
+
+void sql_execution_uses_indexed_equality_lookups() {
+  const auto path = std::filesystem::temp_directory_path() / "pageforge-sql-index-test.db";
+  std::filesystem::remove(path);
+  {
+    auto heap = HeapFile::create(path);
+    BufferPool pool(heap, 4);
+    RecordStore records(pool);
+    Catalog catalog(records);
+    (void)catalog.create_table({"Items", {{"id", pageforge::DataType::Integer, false},
+                                           {"name", pageforge::DataType::Text, false},
+                                           {"active", pageforge::DataType::Boolean, false}},
+                                1});
+    auto index = BPlusTreeIndex::create(records);
+    (void)catalog.register_index({"items_id_idx", "Items", "id", index.header_id()});
+    TableStore tables(records, catalog);
+    const auto one_id = tables.insert("Items", {std::int64_t{1}, std::string("one"), true});
+    (void)tables.insert("Items", {std::int64_t{2}, std::string("two-b"), false});
+    const auto two_id = tables.insert("Items", {std::int64_t{2}, std::string("two-a"), true});
+
+    auto selected = pageforge::execute_select_sql(
+        tables, catalog,
+        "SELECT name FROM items WHERE ID = 2 AND active = TRUE ORDER BY name ASC");
+    check(selected.access_path() == pageforge::SelectAccessPath::IndexLookup &&
+              selected.index_name() == std::optional<std::string>{"items_id_idx"},
+          "integer equality should choose the matching catalog-owned index");
+    const auto row = selected.next();
+    check(row && row->id == two_id && row->values == pageforge::Tuple{std::string("two-a")} &&
+              !selected.next(),
+          "indexed candidates should still pass residual filters, sorting, and projection");
+
+    auto text_scan = pageforge::execute_select_sql(
+        tables, catalog, "SELECT id FROM Items WHERE name = 'one'");
+    check(text_scan.access_path() == pageforge::SelectAccessPath::TableScan && !text_scan.index_name(),
+          "an equality predicate without a matching index should retain a table scan");
+    check(text_scan.next()->id == one_id && !text_scan.next(),
+          "table-scan fallback should preserve SQL results");
+
+    auto range_scan = pageforge::execute_select_sql(
+        tables, catalog, "SELECT id FROM Items WHERE id >= 2");
+    check(range_scan.access_path() == pageforge::SelectAccessPath::TableScan,
+          "range predicates should not claim unsupported index planning");
+
+    check(index.insert(999, one_id), "test should be able to inject a stale logical index entry");
+    check_throws<TableCorruption>([&] { (void)tables.lookup_index("items_id_idx", 999); },
+                                  "index lookup should reject keys that disagree with table rows");
   }
   std::filesystem::remove(path);
 }
@@ -1535,6 +1594,7 @@ int main() {
       {"SQL parser invalid statements", sql_parser_rejects_invalid_statements},
       {"SQL binding and execution", sql_execution_binds_and_streams_results},
       {"SQL binding validation", sql_execution_rejects_binding_errors},
+      {"SQL indexed equality execution", sql_execution_uses_indexed_equality_lookups},
       {"B+ tree routing, splits, ranges, and reopen", bplus_tree_routes_splits_ranges_and_reopens},
       {"B+ tree corruption detection", bplus_tree_detects_corruption},
       {"B+ tree deletion and root collapse", bplus_tree_deletes_repairs_and_collapses},
