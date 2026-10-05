@@ -1,10 +1,13 @@
 #pragma once
 
+#include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <variant>
 
 #include "pageforge/query.hpp"
 #include "pageforge/sql_parser.hpp"
@@ -17,6 +20,18 @@ class SqlBindError final : public std::runtime_error {
 };
 
 enum class SelectAccessPath { TableScan, IndexLookup };
+
+struct SelectExplanation {
+  std::string table;
+  SelectAccessPath access_path = SelectAccessPath::TableScan;
+  std::optional<std::string> index_name;
+  std::optional<std::int64_t> lookup_key;
+  std::size_t predicate_count = 0;
+  bool sorts_rows = false;
+  std::optional<std::size_t> limit;
+
+  bool operator==(const SelectExplanation&) const = default;
+};
 
 class BoundSelect {
  public:
@@ -44,6 +59,9 @@ class BoundSelect {
 };
 
 [[nodiscard]] BoundSelect bind_select(TableStore& tables, Catalog& catalog, const SelectPlan& plan);
+[[nodiscard]] SelectExplanation explain_select(Catalog& catalog, const SelectPlan& plan);
 [[nodiscard]] BoundSelect execute_select_sql(TableStore& tables, Catalog& catalog, std::string_view sql);
+using SqlExecution = std::variant<BoundSelect, SelectExplanation>;
+[[nodiscard]] SqlExecution execute_sql(TableStore& tables, Catalog& catalog, std::string_view sql);
 
 }  // namespace pageforge

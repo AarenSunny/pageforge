@@ -75,10 +75,20 @@ special=$(printf 'Tab\tName\\Path')
 "$cli" "$database" insert people +5 Plus false NULL >/dev/null
 [ "$("$cli" "$database" query "SELECT id FROM people WHERE name = 'Plus'")" = \
   "$(printf 'id\n5')" ]
+[ "$("$cli" "$database" query "EXPLAIN SELECT name FROM people WHERE id = 2")" = \
+  "TABLE_SCAN table=People predicates=1 sort=false limit=none" ]
+"$cli" "$database" create-index people_id_idx people id >/dev/null
+[ "$("$cli" "$database" query "EXPLAIN SELECT name FROM people WHERE id = 2")" = \
+  "INDEX_LOOKUP table=People index=people_id_idx key=2 predicates=1 sort=false limit=none" ]
+[ "$("$cli" "$database" query "EXPLAIN SELECT name FROM people WHERE id >= 2 ORDER BY name LIMIT 3")" = \
+  "TABLE_SCAN table=People predicates=1 sort=true limit=3" ]
+[ "$("$cli" "$database" query "SELECT name FROM people WHERE id = 2")" = \
+  "$(printf 'name\nBob Smith')" ]
 
 shell_output=$(printf '%s\n' \
   '.tables' \
   '.schema people' \
+  'EXPLAIN SELECT name FROM people WHERE id = 2;' \
   'SELECT name FROM people WHERE active = TRUE ORDER BY id DESC;' \
   '.unknown' \
   'SELECT id FROM people WHERE id = 2;' \
@@ -86,6 +96,7 @@ shell_output=$(printf '%s\n' \
 [ "$shell_output" = "$(printf '%s\n' \
   'People' \
   'People(id INTEGER NOT NULL, name TEXT NOT NULL, active BOOLEAN NOT NULL, note TEXT NULL) [schema version 1]' \
+  'INDEX_LOOKUP table=People index=people_id_idx key=2 predicates=1 sort=false limit=none' \
   'name' \
   'Grace' \
   'Ada' \
@@ -99,6 +110,14 @@ if "$cli" "$database" create-table people other:int >/dev/null 2>&1; then
 fi
 if "$cli" "$database" create-table broken invalid >/dev/null 2>&1; then
   echo "invalid column specification was accepted" >&2
+  exit 1
+fi
+if "$cli" "$database" create-index people_id_idx people id >/dev/null 2>&1; then
+  echo "duplicate index was accepted" >&2
+  exit 1
+fi
+if "$cli" "$database" create-index people_name_idx people name >/dev/null 2>&1; then
+  echo "non-integer index was accepted" >&2
   exit 1
 fi
 if "$cli" "$database" insert people 4 only-two >/dev/null 2>&1; then

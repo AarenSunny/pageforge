@@ -46,6 +46,14 @@ struct SelectPlan {
   bool operator==(const SelectPlan&) const = default;
 };
 
+struct ExplainPlan {
+  SelectPlan select;
+
+  bool operator==(const ExplainPlan&) const = default;
+};
+
+using SqlStatement = std::variant<SelectPlan, ExplainPlan>;
+
 class SqlParseError final : public std::runtime_error {
  public:
   SqlParseError(std::size_t line, std::size_t column, std::string message);
@@ -59,5 +67,6 @@ class SqlParseError final : public std::runtime_error {
 };
 
 [[nodiscard]] SelectPlan parse_select(std::string_view source);
+[[nodiscard]] SqlStatement parse_sql_statement(std::string_view source);
 
 }  // namespace pageforge

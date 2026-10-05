@@ -22,6 +22,7 @@ compaction, a durable heap file, a buffer manager, and typed catalog metadata.
 - Portable typed tuples with integers, text, booleans, nulls, and strict decoding
 - Persistent table catalog with named, versioned schemas and duplicate detection
 - Persistent B+ tree catalog ownership bound to validated integer columns
+- Existing-row B+ tree construction through the typed table layer
 - Typed table rows with schema-bound operations and automatic index maintenance
 - Streaming record and typed-table cursors without materializing row sets
 - Composable filter, stable sort, projection, and limit query operators
@@ -29,6 +30,7 @@ compaction, a durable heap file, a buffer manager, and typed catalog metadata.
 - Strict `SELECT` parser with conjunctive predicates and explicit null tests
 - Catalog-bound SQL execution with typed filters and `ORDER BY`
 - Index-aware SQL planning for exact integer equality predicates
+- Non-executing `EXPLAIN SELECT` output for table scans and index lookups
 - CLI for typed writes, SQL queries, and an introspective interactive shell
 - Multi-stage, non-root Docker image with cross-container persistence tests
 - JSON benchmark harness for durable inserts, SQL filters, and reopen scans
@@ -47,6 +49,9 @@ Run `make benchmark` to build the standalone performance harness, then see
 [docs/BENCHMARKS.md](docs/BENCHMARKS.md) for its workload and measurement
 contract.
 
+For a concise project presentation, follow the
+[three-minute portfolio demo](docs/DEMO.md).
+
 ## Try the storage engine
 
 ```bash
@@ -56,6 +61,9 @@ make
 ./build/pageforge demo.db insert people 1 Ada true NULL
 ./build/pageforge demo.db insert people 2 "Grace Hopper" true compiler
 ./build/pageforge demo.db insert people 3 Bob false analyst
+./build/pageforge demo.db query "EXPLAIN SELECT name FROM people WHERE id = 2"
+./build/pageforge demo.db create-index people_id_idx people id
+./build/pageforge demo.db query "EXPLAIN SELECT name FROM people WHERE id = 2"
 ./build/pageforge demo.db query \
   "SELECT name, id FROM people WHERE active = TRUE ORDER BY id DESC LIMIT 10;"
 ./build/pageforge demo.db shell
@@ -65,7 +73,9 @@ The one-shot commands reopen the same database in a new process. `init` refuses
 an existing path. `create-table` accepts `int`, `text`, and `bool` columns, with
 `?` marking nullable columns. `insert` parses values from the stored schema and
 uses uppercase `NULL` for null. `query` prints an escaped, tab-separated result;
-`shell` adds `.tables` and `.schema` introspection for live demos. Low-level
+`query` also explains a validated plan without executing it. `create-index`
+backfills existing integer keys, and `shell` adds `.tables` and `.schema`
+introspection for live demos. Low-level
 `put`, `get`, `erase`, and `list` commands remain available for raw record
 inspection. See [docs/CLI.md](docs/CLI.md) for the complete command and output
 contract. Use a disposable path if you want to start over.
@@ -97,6 +107,7 @@ and current routing boundary.
 - [x] Persistent catalog ownership for validated B+ tree indexes
 - [x] Automatic B+ tree maintenance for typed-table inserts and deletes
 - [x] Exact-equality index selection with residual predicate validation
+- [x] Non-executing `EXPLAIN SELECT` plan introspection
 - [ ] Recursive internal splits and range-aware index planning
 - [x] Typed tuple encoding and corruption validation
 - [x] Catalog metadata and schema persistence
@@ -110,6 +121,7 @@ and current routing boundary.
 - [ ] Write-ahead logging and crash recovery
 - [ ] Transactions, locking, and isolation
 - [x] Typed table and SQL CLI with end-to-end smoke test
+- [x] CLI index creation with existing-row backfill
 - [x] Interactive SQL shell with table and schema introspection
 - [x] Multi-stage Docker image and container persistence smoke test
 - [x] Validating benchmark harness with machine-readable metrics

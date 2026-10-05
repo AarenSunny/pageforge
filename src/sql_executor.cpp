@@ -155,13 +155,20 @@ std::optional<IndexLookup> choose_index(Catalog& catalog, const TableDefinition&
   return std::nullopt;
 }
 
-}  // namespace
+struct AnalyzedSelect {
+  TableDefinition table;
+  std::vector<RowPredicate> predicates;
+  std::optional<RowLess> order;
+  Schema output_schema;
+  std::optional<std::vector<std::size_t>> projection;
+  std::optional<IndexLookup> lookup;
+};
 
-BoundSelect bind_select(TableStore& tables, Catalog& catalog, const SelectPlan& plan) {
+AnalyzedSelect analyze_select(Catalog& catalog, const SelectPlan& plan) {
   if ((plan.select_all && !plan.columns.empty()) || (!plan.select_all && plan.columns.empty())) {
     throw SqlBindError("logical plan must select either '*' or one or more columns");
   }
-  const auto table = resolve_table(catalog, plan.table);
+  auto table = resolve_table(catalog, plan.table);
   std::vector<RowPredicate> predicates;
   predicates.reserve(plan.predicates.size());
   for (const auto& predicate : plan.predicates) {
@@ -185,20 +192,56 @@ BoundSelect bind_select(TableStore& tables, Catalog& catalog, const SelectPlan& 
     }
   }
 
-  const auto lookup = choose_index(catalog, table, plan.predicates);
-  auto query = lookup ? Query::from_rows(tables.lookup_index(lookup->name, lookup->key), table.schema.size())
-                      : Query::from(tables, table.name);
-  for (auto& predicate : predicates) query.filter(std::move(predicate));
-  if (order) query.sort(std::move(*order));
-  if (projection) query.project(std::move(*projection));
+  auto lookup = choose_index(catalog, table, plan.predicates);
+  return {std::move(table), std::move(predicates), std::move(order), std::move(output_schema),
+          std::move(projection), std::move(lookup)};
+}
+
+}  // namespace
+
+BoundSelect bind_select(TableStore& tables, Catalog& catalog, const SelectPlan& plan) {
+  auto analyzed = analyze_select(catalog, plan);
+  auto query = analyzed.lookup
+                   ? Query::from_rows(
+                         tables.lookup_index(analyzed.lookup->name, analyzed.lookup->key),
+                         analyzed.table.schema.size())
+                   : Query::from(tables, analyzed.table.name);
+  for (auto& predicate : analyzed.predicates) query.filter(std::move(predicate));
+  if (analyzed.order) query.sort(std::move(*analyzed.order));
+  if (analyzed.projection) query.project(std::move(*analyzed.projection));
   if (plan.limit) query.limit(*plan.limit);
-  return BoundSelect(std::move(query), std::move(output_schema),
-                     lookup ? SelectAccessPath::IndexLookup : SelectAccessPath::TableScan,
-                     lookup ? std::optional<std::string>{lookup->name} : std::nullopt);
+  return BoundSelect(
+      std::move(query), std::move(analyzed.output_schema),
+      analyzed.lookup ? SelectAccessPath::IndexLookup : SelectAccessPath::TableScan,
+      analyzed.lookup ? std::optional<std::string>{analyzed.lookup->name} : std::nullopt);
+}
+
+SelectExplanation explain_select(Catalog& catalog, const SelectPlan& plan) {
+  auto analyzed = analyze_select(catalog, plan);
+  SelectExplanation explanation;
+  explanation.table = std::move(analyzed.table.name);
+  explanation.access_path =
+      analyzed.lookup ? SelectAccessPath::IndexLookup : SelectAccessPath::TableScan;
+  if (analyzed.lookup) {
+    explanation.index_name = std::move(analyzed.lookup->name);
+    explanation.lookup_key = analyzed.lookup->key;
+  }
+  explanation.predicate_count = plan.predicates.size();
+  explanation.sorts_rows = plan.order.has_value();
+  explanation.limit = plan.limit;
+  return explanation;
 }
 
 BoundSelect execute_select_sql(TableStore& tables, Catalog& catalog, std::string_view sql) {
   return bind_select(tables, catalog, parse_select(sql));
+}
+
+SqlExecution execute_sql(TableStore& tables, Catalog& catalog, std::string_view sql) {
+  auto statement = parse_sql_statement(sql);
+  if (std::holds_alternative<SelectPlan>(statement)) {
+    return bind_select(tables, catalog, std::get<SelectPlan>(statement));
+  }
+  return explain_select(catalog, std::get<ExplainPlan>(statement).select);
 }
 
 }  // namespace pageforge

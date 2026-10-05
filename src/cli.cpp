@@ -24,8 +24,9 @@ void usage() {
   std::cerr << "Usage: pageforge <database> <command> [arguments]\n"
                "  init                              Create a new database\n"
                "  create-table <table> <name:type>... Create a typed table\n"
+               "  create-index <index> <table> <column> Build an integer B+ tree index\n"
                "  insert <table> <value>...          Insert a typed row\n"
-               "  query <select-sql>                 Execute a SELECT statement\n"
+               "  query <sql>                        Execute SELECT or EXPLAIN SELECT\n"
                "  shell                              Start the interactive SQL shell\n"
                "  put <text>                          Insert a raw text record\n"
                "  get <page:slot>                     Read a raw record\n"
@@ -202,6 +203,31 @@ void print_query(pageforge::BoundSelect result) {
   }
 }
 
+void print_explanation(const pageforge::SelectExplanation& explanation) {
+  std::cout << (explanation.access_path == pageforge::SelectAccessPath::IndexLookup
+                    ? "INDEX_LOOKUP"
+                    : "TABLE_SCAN")
+            << " table=" << explanation.table;
+  if (explanation.index_name) std::cout << " index=" << *explanation.index_name;
+  if (explanation.lookup_key) std::cout << " key=" << *explanation.lookup_key;
+  std::cout << " predicates=" << explanation.predicate_count
+            << " sort=" << (explanation.sorts_rows ? "true" : "false") << " limit=";
+  if (explanation.limit) {
+    std::cout << *explanation.limit;
+  } else {
+    std::cout << "none";
+  }
+  std::cout << '\n';
+}
+
+void print_sql_execution(pageforge::SqlExecution execution) {
+  if (std::holds_alternative<pageforge::BoundSelect>(execution)) {
+    print_query(std::move(std::get<pageforge::BoundSelect>(execution)));
+  } else {
+    print_explanation(std::get<pageforge::SelectExplanation>(execution));
+  }
+}
+
 std::string_view trim(std::string_view value) {
   const auto whitespace = [](char character) {
     return character == ' ' || character == '\t' || character == '\n' || character == '\r' ||
@@ -233,7 +259,7 @@ void print_schema(const pageforge::TableDefinition& table) {
 }
 
 void print_shell_help() {
-  std::cout << "Enter one SELECT statement per line. Shell commands:\n"
+  std::cout << "Enter one SELECT or EXPLAIN SELECT statement per line. Shell commands:\n"
                "  .tables        List tables\n"
                "  .schema TABLE  Show a table schema\n"
                "  .help          Show this help\n"
@@ -277,7 +303,7 @@ void run_shell(pageforge::TableStore& tables, pageforge::Catalog& catalog) {
       } else if (input.front() == '.') {
         throw std::invalid_argument("unknown shell command; type .help for help");
       } else {
-        print_query(pageforge::execute_select_sql(tables, catalog, input));
+        print_sql_execution(pageforge::execute_sql(tables, catalog, input));
       }
     } catch (const std::exception& error) {
       std::cerr << "pageforge: " << error.what() << '\n';
@@ -306,8 +332,10 @@ int run(int argc, char* argv[]) {
   const bool one_argument = command == "put" || command == "get" || command == "erase" || command == "query";
   const bool no_argument = command == "list" || command == "shell";
   const bool variable_arguments = command == "create-table" || command == "insert";
-  if ((!one_argument && !no_argument && !variable_arguments) || (one_argument && argc != 4) ||
-      (no_argument && argc != 3) || (variable_arguments && argc < 5)) {
+  const bool three_arguments = command == "create-index";
+  if ((!one_argument && !no_argument && !variable_arguments && !three_arguments) ||
+      (one_argument && argc != 4) || (no_argument && argc != 3) ||
+      (variable_arguments && argc < 5) || (three_arguments && argc != 6)) {
     usage();
     return 2;
   }
@@ -359,6 +387,24 @@ int run(int argc, char* argv[]) {
     (void)catalog.create_table({std::string(table_name), std::move(schema), 1});
     pool.flush_all();
     std::cout << "created table " << table_name << '\n';
+  } else if (command == "create-index") {
+    const std::string_view index_name(argv[3]);
+    if (!is_sql_identifier(index_name)) throw std::invalid_argument("index name is not a SQL identifier");
+    for (const auto& index : catalog.list_indexes()) {
+      if (equal_name(index.name, index_name)) throw std::invalid_argument("index already exists");
+    }
+    const auto table = resolve_table(catalog, argv[4]);
+    std::optional<std::string> column_name;
+    for (const auto& column : table.schema) {
+      if (!equal_name(column.name, argv[5])) continue;
+      if (column_name) throw std::invalid_argument("ambiguous column name");
+      column_name = column.name;
+    }
+    if (!column_name) throw std::invalid_argument("column not found");
+    (void)tables.create_index(index_name, table.name, *column_name);
+    pool.flush_all();
+    std::cout << "created index " << index_name << " on " << table.name << '(' << *column_name
+              << ")\n";
   } else if (command == "insert") {
     const auto table = resolve_table(catalog, argv[3]);
     if (static_cast<std::size_t>(argc - 4) != table.schema.size()) {
@@ -374,7 +420,7 @@ int run(int argc, char* argv[]) {
     print_id(id);
     std::cout << '\n';
   } else if (command == "query") {
-    print_query(pageforge::execute_select_sql(tables, catalog, argv[3]));
+    print_sql_execution(pageforge::execute_sql(tables, catalog, argv[3]));
   } else {
     run_shell(tables, catalog);
   }

@@ -849,6 +849,47 @@ void typed_tables_maintain_registered_indexes() {
   std::filesystem::remove(path);
 }
 
+void typed_tables_build_indexes_for_existing_rows() {
+  const auto path = std::filesystem::temp_directory_path() / "pageforge-table-index-build-test.db";
+  std::filesystem::remove(path);
+  {
+    auto heap = HeapFile::create(path);
+    BufferPool pool(heap, 4);
+    RecordStore records(pool);
+    Catalog catalog(records);
+    (void)catalog.create_table({"items", {{"score", pageforge::DataType::Integer, true},
+                                           {"name", pageforge::DataType::Text, false}},
+                                1});
+    TableStore tables(records, catalog);
+    const auto first = tables.insert("items", {std::int64_t{7}, std::string("first")});
+    (void)tables.insert("items", {std::monostate{}, std::string("unscored")});
+    const auto second = tables.insert("items", {std::int64_t{7}, std::string("second")});
+
+    (void)tables.create_index("items_score_idx", "items", "score");
+    const auto definition = catalog.find_index("items_score_idx");
+    check(definition && definition->table == "items" && definition->column == "score",
+          "built index should become catalog-owned after existing rows are populated");
+    const auto matches = tables.lookup_index("items_score_idx", 7);
+    check(matches.size() == 2 && matches[0].id == first && matches[1].id == second,
+          "index build should include duplicate existing keys and omit nulls");
+
+    const auto third = tables.insert("items", {std::int64_t{7}, std::string("third")});
+    const auto updated = tables.lookup_index("items_score_idx", 7);
+    check(updated.size() == 3 && updated.back().id == third,
+          "writes after index creation should continue automatic maintenance");
+    check_throws<std::invalid_argument>(
+        [&] { (void)tables.create_index("items_score_idx", "items", "score"); },
+        "building a duplicate index should fail before allocating another tree");
+    check_throws<std::invalid_argument>(
+        [&] { (void)tables.create_index("", "items", "score"); },
+        "index builder should validate its name before allocating a tree");
+    check_throws<std::invalid_argument>(
+        [&] { (void)tables.create_index("items_name_idx", "items", "name"); },
+        "index builder should reject non-integer columns");
+  }
+  std::filesystem::remove(path);
+}
+
 void typed_tables_reject_corrupt_owned_indexes_before_writes() {
   const auto path = std::filesystem::temp_directory_path() / "pageforge-table-index-corruption-test.db";
   std::filesystem::remove(path);
@@ -1166,6 +1207,27 @@ void sql_parser_maps_comparisons_and_signs() {
         "boolean keywords should be case-insensitive");
 }
 
+void sql_parser_builds_explain_statements() {
+  const auto statement = pageforge::parse_sql_statement(
+      "eXpLaIn SELECT name FROM People WHERE id = 7 ORDER BY name LIMIT 1;");
+  check(std::holds_alternative<pageforge::ExplainPlan>(statement),
+        "statement parser should distinguish EXPLAIN from executable SELECT");
+  const auto& select = std::get<pageforge::ExplainPlan>(statement).select;
+  check(select.table == "People" && select.columns == std::vector<std::string>{"name"} &&
+            select.predicates.size() == 1 && select.order && select.limit == 1,
+        "EXPLAIN should retain the complete nested SELECT plan");
+
+  const auto ordinary = pageforge::parse_sql_statement("SELECT * FROM People");
+  check(std::holds_alternative<pageforge::SelectPlan>(ordinary),
+        "statement parser should retain ordinary SELECT statements");
+  check_throws<SqlParseError>(
+      [] { (void)pageforge::parse_select("EXPLAIN SELECT * FROM people"); },
+      "SELECT-only parser should continue rejecting EXPLAIN");
+  check_throws<SqlParseError>(
+      [] { (void)pageforge::parse_sql_statement("EXPLAIN DELETE FROM people"); },
+      "EXPLAIN should accept only the supported SELECT grammar");
+}
+
 void sql_parser_rejects_invalid_statements() {
   const std::vector<std::string> invalid{
       "", "DELETE FROM people", "SELECT FROM people", "SELECT a, FROM people",
@@ -1390,6 +1452,53 @@ void sql_execution_uses_indexed_equality_lookups() {
   std::filesystem::remove(path);
 }
 
+void sql_explain_reports_access_paths_without_running_rows() {
+  const auto path = std::filesystem::temp_directory_path() / "pageforge-sql-explain-test.db";
+  std::filesystem::remove(path);
+  {
+    auto heap = HeapFile::create(path);
+    BufferPool pool(heap, 4);
+    RecordStore records(pool);
+    Catalog catalog(records);
+    (void)catalog.create_table({"Items", {{"id", pageforge::DataType::Integer, false},
+                                           {"name", pageforge::DataType::Text, false}},
+                                1});
+    TableStore tables(records, catalog);
+    (void)tables.insert("Items", {std::int64_t{7}, std::string("seven")});
+    const auto plan = pageforge::parse_select(
+        "SELECT name FROM items WHERE id = 7 ORDER BY name LIMIT 1");
+
+    const auto scan = pageforge::explain_select(catalog, plan);
+    check(scan.table == "Items" && scan.access_path == pageforge::SelectAccessPath::TableScan &&
+              !scan.index_name && !scan.lookup_key && scan.predicate_count == 1 &&
+              scan.sorts_rows && scan.limit == 1,
+          "EXPLAIN should report validated table-scan planning metadata");
+
+    (void)tables.create_index("items_id_idx", "Items", "id");
+    const auto indexed = pageforge::explain_select(catalog, plan);
+    check(indexed.access_path == pageforge::SelectAccessPath::IndexLookup &&
+              indexed.index_name == std::optional<std::string>{"items_id_idx"} &&
+              indexed.lookup_key == std::optional<std::int64_t>{7},
+          "EXPLAIN should identify the chosen equality index and lookup key");
+
+    auto execution = pageforge::execute_sql(
+        tables, catalog, "EXPLAIN SELECT name FROM items WHERE id = 7");
+    check(std::holds_alternative<pageforge::SelectExplanation>(execution) &&
+              std::get<pageforge::SelectExplanation>(execution).access_path ==
+                  pageforge::SelectAccessPath::IndexLookup,
+          "general SQL execution should dispatch EXPLAIN without producing rows");
+    auto selected = pageforge::execute_sql(
+        tables, catalog, "SELECT name FROM items WHERE id = 7");
+    check(std::holds_alternative<pageforge::BoundSelect>(selected),
+          "general SQL execution should retain ordinary SELECT results");
+    auto& rows = std::get<pageforge::BoundSelect>(selected);
+    const auto row = rows.next();
+    check(row && row->values == pageforge::Tuple{std::string("seven")} && !rows.next(),
+          "EXPLAIN support should not change SELECT results");
+  }
+  std::filesystem::remove(path);
+}
+
 void bplus_tree_routes_splits_ranges_and_reopens() {
   const auto path = std::filesystem::temp_directory_path() / "pageforge-bplus-leaves-test.db";
   std::filesystem::remove(path);
@@ -1608,6 +1717,7 @@ int main() {
       {"typed table persistence and isolation", typed_tables_persist_and_isolate_rows},
       {"typed table input and ownership validation", typed_tables_validate_input_and_ownership},
       {"typed table automatic index maintenance", typed_tables_maintain_registered_indexes},
+      {"typed table existing-row index build", typed_tables_build_indexes_for_existing_rows},
       {"typed table index corruption safety", typed_tables_reject_corrupt_owned_indexes_before_writes},
       {"typed table corruption detection", typed_tables_detect_corrupt_envelopes},
       {"query filter, projection, and limit", query_pipeline_filters_projects_and_limits},
@@ -1617,10 +1727,12 @@ int main() {
       {"SQL lexer malformed input", sql_lexer_rejects_malformed_input},
       {"SQL parser SELECT plans", sql_parser_builds_select_plans},
       {"SQL parser comparisons and signs", sql_parser_maps_comparisons_and_signs},
+      {"SQL parser EXPLAIN statements", sql_parser_builds_explain_statements},
       {"SQL parser invalid statements", sql_parser_rejects_invalid_statements},
       {"SQL binding and execution", sql_execution_binds_and_streams_results},
       {"SQL binding validation", sql_execution_rejects_binding_errors},
       {"SQL indexed equality execution", sql_execution_uses_indexed_equality_lookups},
+      {"SQL EXPLAIN access paths", sql_explain_reports_access_paths_without_running_rows},
       {"B+ tree routing, splits, ranges, and reopen", bplus_tree_routes_splits_ranges_and_reopens},
       {"B+ tree corruption detection", bplus_tree_detects_corruption},
       {"B+ tree deletion and root collapse", bplus_tree_deletes_repairs_and_collapses},

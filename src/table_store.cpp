@@ -198,6 +198,35 @@ std::vector<TableRow> TableStore::scan(std::string_view table_name) {
   return rows;
 }
 
+RecordId TableStore::create_index(std::string_view index_name, std::string_view table_name,
+                                  std::string_view column_name) {
+  if (index_name.empty()) throw std::invalid_argument("index name must not be empty");
+  if (index_name.size() > std::numeric_limits<std::uint16_t>::max()) {
+    throw std::invalid_argument("index name is too long");
+  }
+  if (catalog_.find_index(index_name)) throw std::invalid_argument("index already exists");
+  const auto table = require_table(table_name);
+  const auto column = std::find_if(table.schema.begin(), table.schema.end(), [&](const auto& candidate) {
+    return candidate.name == column_name;
+  });
+  if (column == table.schema.end()) throw std::invalid_argument("index column does not exist");
+  if (column->type != DataType::Integer) {
+    throw std::invalid_argument("B+ tree indexes require an integer column");
+  }
+
+  const auto position = static_cast<std::size_t>(column - table.schema.begin());
+  const auto rows = scan(table.name);
+  auto index = BPlusTreeIndex::create(records_);
+  for (const auto& row : rows) {
+    if (std::holds_alternative<std::monostate>(row.values[position])) continue;
+    if (!index.insert(std::get<std::int64_t>(row.values[position]), row.id)) {
+      throw TableCorruption("new index rejected an existing table row");
+    }
+  }
+  return catalog_.register_index(
+      {std::string(index_name), table.name, column->name, index.header_id()});
+}
+
 std::vector<TableRow> TableStore::lookup_index(std::string_view index_name, std::int64_t key) {
   const auto definition = catalog_.find_index(index_name);
   if (!definition) throw std::out_of_range("index does not exist");

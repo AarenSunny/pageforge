@@ -23,12 +23,17 @@ on the resolved table and column. When one exists, only matching record IDs are
 loaded before the ordinary filter pipeline runs. All predicates—including the
 one used for lookup—are still evaluated against decoded rows, so residual
 filters and SQL null semantics remain unchanged. The selected path is visible
-without executing the query:
+on a bound query, and `EXPLAIN SELECT` exposes it without constructing a table
+cursor or loading index hits:
 
 ```cpp
 if (result.access_path() == pageforge::SelectAccessPath::IndexLookup) {
     // result.index_name() identifies the chosen persisted index.
 }
+
+auto explanation = pageforge::explain_select(catalog, plan);
+// explanation contains TABLE_SCAN or INDEX_LOOKUP, the resolved table,
+// optional index and key, predicate count, sort requirement, and limit.
 ```
 
 Index selection follows predicate order and catalog creation order. Range,
@@ -59,7 +64,15 @@ and limit. It compares integers numerically, text by `std::string` byte order,
 and booleans with `false` before `true`; nulls sort last in both directions.
 Sorting is stable but blocking and currently keeps every filtered row in memory.
 
+`execute_sql` dispatches ordinary `SELECT` statements to `BoundSelect` and
+`EXPLAIN SELECT` statements to `SelectExplanation`. Explanation still performs
+full parsing and binding, so invalid tables, columns, literal types, and sort
+keys fail exactly as they do for execution; it stops before creating a table
+cursor or performing the planned index lookup.
+
 Execution remains single-threaded. Table scans inherit the underlying cursor's
 non-snapshot behavior; index lookups materialize matching rows before the
 operator pipeline begins. The CLI exposes both paths through its `query`
-command and formats the result as escaped, tab-separated text.
+command. Query rows use escaped, tab-separated text, while explanations emit
+one stable line such as
+`INDEX_LOOKUP table=people index=people_id_idx key=7 predicates=1 sort=false limit=none`.

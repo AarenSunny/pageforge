@@ -37,6 +37,11 @@ damaged tree cannot silently create unindexed data.
 decoded `TableRow` values. It cross-checks every hit against catalog ownership,
 the row's table envelope, and the indexed column value before returning it.
 
+`create_index(name, table, column)` builds an integer B+ tree from all existing
+non-null table rows before registering it in the catalog. Duplicate keys remain
+distinct because index entries include the record ID. Once registration
+succeeds, ordinary inserts and deletes maintain the new index automatically.
+
 ## Row envelope
 
 Each typed row is an ordinary heap record with this prefix, followed by the
@@ -63,14 +68,18 @@ same heap pages. The `PFR1`, `PFC1`, and `PFX1` prefixes are reserved, so raw
 application records beginning with one of them can collide with system formats.
 The table's `cursor()` streams decoded rows one at a time; `scan()` materializes
 them for convenience. A cursor captures the initial heap page count but is not a
-transactional snapshot of later changes to existing pages. Insertion linearly
-searches heap pages for space.
+transactional snapshot of later changes to existing pages. Insertion uses a
+wraparound page hint but still has a linear worst case when no existing page can
+accept the payload.
 
-Index registration does not backfill rows that existed beforehand; callers
-must populate the tree before registering it. Maintenance is best-effort atomic
-inside one process: a failed insert removes its row and prior index entries,
-while a failed delete restores prior entries. Without write-ahead logging, a
-process or machine crash can still interrupt a multi-record update. There is no
-schema migration, transaction, or concurrent writer support yet. A deleted
-record ID can be reused by a later insert, so callers must not treat old IDs as
-permanent external keys.
+Direct `Catalog::register_index` does not backfill rows; use
+`TableStore::create_index` when indexing an existing table. Index creation is
+single-threaded and non-transactional. It registers the tree only after the
+backfill succeeds, but a failure after tree allocation can leave unreachable
+internal records. Maintenance is best-effort atomic inside one process: a
+failed insert removes its row and prior index entries, while a failed delete
+restores prior entries. Without write-ahead logging, a process or machine crash
+can still interrupt a multi-record update. There is no schema migration,
+transaction, or concurrent writer support yet. A deleted record ID can be
+reused by a later insert, so callers must not treat old IDs as permanent
+external keys.

@@ -24,6 +24,16 @@ class Parser {
   explicit Parser(std::vector<SqlToken> tokens) : tokens_(std::move(tokens)) {}
 
   SelectPlan parse() {
+    return parse_select_statement();
+  }
+
+  SqlStatement parse_statement() {
+    if (match_keyword("EXPLAIN")) return ExplainPlan{parse_select_statement()};
+    return parse_select_statement();
+  }
+
+ private:
+  SelectPlan parse_select_statement() {
     expect_keyword("SELECT");
     SelectPlan plan;
     if (match(SqlTokenKind::Star)) {
@@ -58,7 +68,6 @@ class Parser {
     return plan;
   }
 
- private:
   [[nodiscard]] const SqlToken& current() const { return tokens_.at(index_); }
 
   bool match(SqlTokenKind kind) {
@@ -179,5 +188,9 @@ SqlParseError::SqlParseError(std::size_t line, std::size_t column, std::string m
       line_(line), column_(column) {}
 
 SelectPlan parse_select(std::string_view source) { return Parser(lex_sql(source)).parse(); }
+
+SqlStatement parse_sql_statement(std::string_view source) {
+  return Parser(lex_sql(source)).parse_statement();
+}
 
 }  // namespace pageforge

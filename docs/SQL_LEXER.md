@@ -23,8 +23,8 @@ quotes. Keywords are intentionally returned as identifiers so the parser can
 handle them case-insensitively in the appropriate grammar position. A leading
 sign is a separate token; the parser will attach it to a numeric expression.
 
-The `SELECT` parser now consumes this token stream, but SQL is not yet accepted
-by the CLI.
+The `SELECT` and `EXPLAIN SELECT` parser consumes this token stream. Both forms
+are accepted by the CLI's `query` command and interactive shell.
 Quoted identifiers, floating-point literals, nested block comments, and
 backslash string escapes are not supported. Non-ASCII text is allowed inside
 quoted strings but not in identifiers. Unterminated strings or comments, NUL

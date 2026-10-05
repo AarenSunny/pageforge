@@ -46,6 +46,8 @@ class TableStore {
   [[nodiscard]] Tuple read(std::string_view table_name, RecordId id);
   [[nodiscard]] TableCursor cursor(std::string_view table_name);
   [[nodiscard]] std::vector<TableRow> scan(std::string_view table_name);
+  [[nodiscard]] RecordId create_index(std::string_view index_name, std::string_view table_name,
+                                      std::string_view column_name);
   [[nodiscard]] std::vector<TableRow> lookup_index(std::string_view index_name, std::int64_t key);
   bool erase(std::string_view table_name, RecordId id);
 

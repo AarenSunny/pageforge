@@ -7,8 +7,9 @@ database for every operation, making persistence visible across processes.
 ```text
 pageforge <database> init
 pageforge <database> create-table <table> <name:type>...
+pageforge <database> create-index <index> <table> <integer-column>
 pageforge <database> insert <table> <value>...
-pageforge <database> query <select-sql>
+pageforge <database> query <select-or-explain-sql>
 pageforge <database> shell
 pageforge <database> put <text>
 pageforge <database> get <page:slot>
@@ -27,6 +28,9 @@ pageforge contacts.db init
 pageforge contacts.db create-table people id:int name:text active:bool note:text?
 pageforge contacts.db insert people 1 "Ada Lovelace" true NULL
 pageforge contacts.db insert people 2 "Grace Hopper" true compiler
+pageforge contacts.db query "EXPLAIN SELECT name FROM people WHERE id = 2"
+pageforge contacts.db create-index people_id_idx people id
+pageforge contacts.db query "EXPLAIN SELECT name FROM people WHERE id = 2"
 pageforge contacts.db query \
   "SELECT name FROM people WHERE active = TRUE ORDER BY name ASC;"
 ```
@@ -49,13 +53,19 @@ plus `IS NULL` and `IS NOT NULL`. Predicates remain streaming; `OR`, grouping,
 and arbitrary expressions are intentionally rejected for now. A single
 `ORDER BY` column may use `ASC` (the default) or `DESC`; nulls appear last.
 
+`create-index` resolves table and column names case-insensitively, backfills all
+existing non-null integer keys, persists ownership in the catalog, and enables
+automatic maintenance for later writes. `EXPLAIN SELECT` reports the resolved
+table scan or exact-equality index lookup without running the query operator
+pipeline. Range and non-integer predicates intentionally remain table scans.
+
 ## Interactive shell
 
-`shell` keeps the database open and executes one supported `SELECT` statement
-per input line. It prints prompts only when standard input is a terminal, so
-scripts can pipe commands and receive the same tab-separated result format as
-`query`. A statement error is reported to standard error without ending the
-session.
+`shell` keeps the database open and executes one supported `SELECT` or
+`EXPLAIN SELECT` statement per input line. It prints prompts only when standard
+input is a terminal, so scripts can pipe commands and receive the same output
+format as `query`. A statement error is reported to standard error without
+ending the session.
 
 ```text
 $ pageforge contacts.db shell
@@ -64,6 +74,8 @@ pageforge> .tables
 people
 pageforge> .schema people
 people(id INTEGER NOT NULL, name TEXT NOT NULL, active BOOLEAN NOT NULL, note TEXT NULL) [schema version 1]
+pageforge> EXPLAIN SELECT name FROM people WHERE id = 2;
+INDEX_LOOKUP table=people index=people_id_idx key=2 predicates=1 sort=false limit=none
 pageforge> SELECT name FROM people ORDER BY name;
 name
 Ada Lovelace
@@ -73,8 +85,8 @@ pageforge> .quit
 
 Shell commands are `.tables`, `.schema TABLE`, `.help`, and `.quit` (with
 `.exit` as an alias). Table lists are sorted case-insensitively. The shell is
-read-only at the SQL level because PageForge currently parses only `SELECT`;
-use the one-shot `create-table` and `insert` commands for writes.
+read-only at the SQL level because PageForge parses only `SELECT` and
+`EXPLAIN SELECT`; use the one-shot schema and write commands for changes.
 
 ## Raw workflow
 
