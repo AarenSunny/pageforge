@@ -344,6 +344,31 @@ void record_store_reuses_deleted_space() {
   std::filesystem::remove(path);
 }
 
+void record_store_wraps_insertion_hint_to_reuse_space() {
+  const auto path = std::filesystem::temp_directory_path() / "pageforge-record-hint-wrap-test.db";
+  std::filesystem::remove(path);
+  pageforge::RecordId reusable{};
+  {
+    auto heap = HeapFile::create(path);
+    BufferPool pool(heap, 1);
+    RecordStore records(pool);
+    reusable = records.insert(bytes(std::string(3500, 'a')));
+    (void)records.insert(bytes(std::string(1000, 'b')));
+    check(records.erase(reusable), "setup should free space on the first page");
+    pool.flush_all();
+  }
+  {
+    auto heap = HeapFile::open(path);
+    BufferPool pool(heap, 1);
+    RecordStore records(pool);
+    const auto replacement = records.insert(bytes(std::string(3500, 'c')));
+    check(replacement == reusable,
+          "a reopened store should wrap from its append hint and reuse earlier free space");
+    check(heap.page_count() == 2, "hinted insertion should not allocate when an earlier page fits");
+  }
+  std::filesystem::remove(path);
+}
+
 void record_store_rejects_invalid_records() {
   const auto path = std::filesystem::temp_directory_path() / "pageforge-record-invalid-test.db";
   std::filesystem::remove(path);
@@ -1568,6 +1593,7 @@ int main() {
       {"buffer pool allocation and flush", buffer_pool_flushes_allocated_pages},
       {"record store multi-page persistence", record_store_spans_pages_and_reopens},
       {"record store deletion and reuse", record_store_reuses_deleted_space},
+      {"record store insertion hint wraparound", record_store_wraps_insertion_hint_to_reuse_space},
       {"record store input validation", record_store_rejects_invalid_records},
       {"record cursor streaming and pin safety", record_cursor_streams_without_pins},
       {"typed tuple round-trip", tuple_codec_round_trips_typed_values},

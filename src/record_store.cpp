@@ -5,6 +5,10 @@
 
 namespace pageforge {
 
+RecordStore::RecordStore(BufferPool& pool) : pool_(pool) {
+  if (pool_.page_count() != 0) insertion_page_hint_ = pool_.page_count() - 1;
+}
+
 RecordCursor::RecordCursor(RecordCursor&& other) noexcept
     : pool_(other.pool_), next_page_(other.next_page_), next_slot_(other.next_slot_),
       end_page_(other.end_page_) {
@@ -32,17 +36,25 @@ RecordId RecordStore::insert(std::span<const std::byte> bytes) {
     throw PageFull("record cannot fit on an empty page");
   }
 
-  for (PageId page_id = 0; page_id < pool_.page_count(); ++page_id) {
+  const auto page_count = pool_.page_count();
+  const auto start_page = insertion_page_hint_ < page_count ? insertion_page_hint_ : PageId{0};
+  for (PageId offset = 0; offset < page_count; ++offset) {
+    const auto page_id = static_cast<PageId>(
+        (static_cast<std::uint64_t>(start_page) + offset) % page_count);
     auto guard = pool_.fetch(page_id);
     try {
-      return {page_id, guard.mutable_page().insert(bytes)};
+      const auto slot_id = guard.mutable_page().insert(bytes);
+      insertion_page_hint_ = page_id;
+      return {page_id, slot_id};
     } catch (const PageFull&) {
-      // A later page may have room; no page is held pinned across the next fetch.
+      // Another page may have room; no page is held pinned across the next fetch.
     }
   }
 
   auto guard = pool_.allocate();
-  return {guard.page_id(), guard.mutable_page().insert(bytes)};
+  const auto slot_id = guard.mutable_page().insert(bytes);
+  insertion_page_hint_ = guard.page_id();
+  return {guard.page_id(), slot_id};
 }
 
 std::vector<std::byte> RecordStore::read(RecordId id) {

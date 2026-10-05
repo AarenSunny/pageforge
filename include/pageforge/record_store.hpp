@@ -41,7 +41,7 @@ class RecordCursor {
 
 class RecordStore {
  public:
-  explicit RecordStore(BufferPool& pool) : pool_(pool) {}
+  explicit RecordStore(BufferPool& pool);
 
   [[nodiscard]] RecordId insert(std::span<const std::byte> bytes);
   [[nodiscard]] std::vector<std::byte> read(RecordId id);
@@ -52,6 +52,7 @@ class RecordStore {
 
  private:
   BufferPool& pool_;
+  PageId insertion_page_hint_ = 0;
 };
 
 }  // namespace pageforge

@@ -17,6 +17,7 @@ compaction, a durable heap file, a buffer manager, and typed catalog metadata.
 - Durable page allocation, reads, writes, flushing, and reopen
 - Clock-sweep buffer pool with RAII pin guards and dirty-page eviction
 - Multi-page record store with stable-ID replacement, deletion, and scans
+- Wraparound insertion-page hint that accelerates append-heavy record workloads
 - Height-two B+ tree with routing, splits, exact deletion, and range scans
 - Portable typed tuples with integers, text, booleans, nulls, and strict decoding
 - Persistent table catalog with named, versioned schemas and duplicate detection

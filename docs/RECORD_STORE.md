@@ -19,10 +19,18 @@ while (auto next = cursor.next()) {
 pool.flush_all();
 ```
 
-Insertion searches existing pages in page-ID order, so a deletion can release
-space for future records. A page compacts itself if needed, keeping live slot
-IDs stable. If no page fits, the store allocates a new one. The current search
-is linear in the number of pages; a free-space map is a planned optimization.
+Insertion begins at an in-memory hint for the last page that accepted a record,
+then wraps once across the existing pages. A reopened store starts at the final
+heap page, which keeps append-heavy workloads from rescanning full pages from
+page zero while still allowing a deletion on an earlier page to release space
+for future records. A page compacts itself if needed, keeping live slot IDs
+stable. If no page fits, the store allocates a new one and advances the hint.
+
+The hint is deliberately a small optimization rather than persistent free-space
+metadata. It makes sequential insertion close to the expected append path, but
+the worst case remains a linear scan of the heap when no page can fit a record.
+A persisted free-space map is still required for predictable large-database
+insertion latency.
 
 Replacement rebuilds the page payload region while preserving the target slot
 and every neighboring slot. It checks total capacity before changing bytes, so
