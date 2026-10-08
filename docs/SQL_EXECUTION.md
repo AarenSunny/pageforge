@@ -33,7 +33,8 @@ if (result.access_path() == pageforge::SelectAccessPath::IndexLookup) {
 
 auto explanation = pageforge::explain_select(catalog, plan);
 // explanation contains TABLE_SCAN or INDEX_LOOKUP, the resolved table,
-// optional index and key, predicate count, sort requirement, and limit.
+// optional index and key, total and residual predicate counts, the sort
+// requirement, and the limit.
 ```
 
 Index selection follows predicate order and catalog creation order. Range,
@@ -75,4 +76,8 @@ non-snapshot behavior; index lookups materialize matching rows before the
 operator pipeline begins. The CLI exposes both paths through its `query`
 command. Query rows use escaped, tab-separated text, while explanations emit
 one stable line such as
-`INDEX_LOOKUP table=people index=people_id_idx key=7 predicates=1 sort=false limit=none`.
+`INDEX_LOOKUP table=people index=people_id_idx key=7 predicates=2 residual_predicates=1 sort=false limit=none`.
+For an index lookup, `residual_predicates` excludes the single equality
+predicate used to select index candidates; those filters still run alongside
+the lookup predicate during execution. For a table scan, every predicate is
+residual because the access path does not narrow the candidate rows.

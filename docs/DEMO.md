@@ -63,12 +63,16 @@ on-disk catalog and row persistence rather than in-memory state.
 Expected planner output:
 
 ```text
-TABLE_SCAN table=people predicates=1 sort=false limit=none
-INDEX_LOOKUP table=people index=people_id_idx key=2 predicates=1 sort=false limit=none
+TABLE_SCAN table=people predicates=1 residual_predicates=1 sort=false limit=none
+INDEX_LOOKUP table=people index=people_id_idx key=2 predicates=1 residual_predicates=0 sort=false limit=none
 ```
 
 The index command backfills rows that already exist, then registers ownership
-in the catalog. Later inserts and deletes maintain the tree automatically.
+in the catalog. Later inserts and deletes maintain the tree automatically. The
+residual count shows that the table scan must filter its candidate rows, while
+the indexed equality supplies the lookup key directly. Execution still
+rechecks the equality predicate against every decoded index hit for corruption
+safety.
 
 ## 2:15–3:00 — Discuss engineering tradeoffs
 

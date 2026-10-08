@@ -57,7 +57,10 @@ and arbitrary expressions are intentionally rejected for now. A single
 existing non-null integer keys, persists ownership in the catalog, and enables
 automatic maintenance for later writes. `EXPLAIN SELECT` reports the resolved
 table scan or exact-equality index lookup without running the query operator
-pipeline. Range and non-integer predicates intentionally remain table scans.
+pipeline. Its `residual_predicates` field makes post-lookup filtering explicit:
+an indexed equality removes one predicate from that count, while table scans
+leave every predicate residual. Range and non-integer predicates intentionally
+remain table scans.
 
 ## Interactive shell
 
@@ -75,7 +78,7 @@ people
 pageforge> .schema people
 people(id INTEGER NOT NULL, name TEXT NOT NULL, active BOOLEAN NOT NULL, note TEXT NULL) [schema version 1]
 pageforge> EXPLAIN SELECT name FROM people WHERE id = 2;
-INDEX_LOOKUP table=people index=people_id_idx key=2 predicates=1 sort=false limit=none
+INDEX_LOOKUP table=people index=people_id_idx key=2 predicates=1 residual_predicates=0 sort=false limit=none
 pageforge> SELECT name FROM people ORDER BY name;
 name
 Ada Lovelace
