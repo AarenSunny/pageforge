@@ -227,6 +227,8 @@ SelectExplanation explain_select(Catalog& catalog, const SelectPlan& plan) {
     explanation.lookup_key = analyzed.lookup->key;
   }
   explanation.predicate_count = plan.predicates.size();
+  explanation.residual_predicate_count =
+      plan.predicates.size() - static_cast<std::size_t>(analyzed.lookup.has_value());
   explanation.sorts_rows = plan.order.has_value();
   explanation.limit = plan.limit;
   return explanation;

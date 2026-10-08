@@ -27,6 +27,7 @@ struct SelectExplanation {
   std::optional<std::string> index_name;
   std::optional<std::int64_t> lookup_key;
   std::size_t predicate_count = 0;
+  std::size_t residual_predicate_count = 0;
   bool sorts_rows = false;
   std::optional<std::size_t> limit;
 

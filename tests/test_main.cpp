@@ -1471,15 +1471,23 @@ void sql_explain_reports_access_paths_without_running_rows() {
     const auto scan = pageforge::explain_select(catalog, plan);
     check(scan.table == "Items" && scan.access_path == pageforge::SelectAccessPath::TableScan &&
               !scan.index_name && !scan.lookup_key && scan.predicate_count == 1 &&
-              scan.sorts_rows && scan.limit == 1,
+              scan.residual_predicate_count == 1 && scan.sorts_rows && scan.limit == 1,
           "EXPLAIN should report validated table-scan planning metadata");
 
     (void)tables.create_index("items_id_idx", "Items", "id");
     const auto indexed = pageforge::explain_select(catalog, plan);
     check(indexed.access_path == pageforge::SelectAccessPath::IndexLookup &&
               indexed.index_name == std::optional<std::string>{"items_id_idx"} &&
-              indexed.lookup_key == std::optional<std::int64_t>{7},
+              indexed.lookup_key == std::optional<std::int64_t>{7} &&
+              indexed.predicate_count == 1 && indexed.residual_predicate_count == 0,
           "EXPLAIN should identify the chosen equality index and lookup key");
+
+    const auto residual = pageforge::explain_select(
+        catalog,
+        pageforge::parse_select("SELECT name FROM items WHERE id = 7 AND name = 'seven'"));
+    check(residual.access_path == pageforge::SelectAccessPath::IndexLookup &&
+              residual.predicate_count == 2 && residual.residual_predicate_count == 1,
+          "EXPLAIN should separate the lookup predicate from residual filters");
 
     auto execution = pageforge::execute_sql(
         tables, catalog, "EXPLAIN SELECT name FROM items WHERE id = 7");
