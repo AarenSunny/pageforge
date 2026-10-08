@@ -211,6 +211,7 @@ void print_explanation(const pageforge::SelectExplanation& explanation) {
   if (explanation.index_name) std::cout << " index=" << *explanation.index_name;
   if (explanation.lookup_key) std::cout << " key=" << *explanation.lookup_key;
   std::cout << " predicates=" << explanation.predicate_count
+            << " residual_predicates=" << explanation.residual_predicate_count
             << " sort=" << (explanation.sorts_rows ? "true" : "false") << " limit=";
   if (explanation.limit) {
     std::cout << *explanation.limit;
