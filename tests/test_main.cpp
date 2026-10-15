@@ -890,6 +890,49 @@ void typed_tables_build_indexes_for_existing_rows() {
   std::filesystem::remove(path);
 }
 
+void typed_tables_read_validated_index_ranges() {
+  const auto path = std::filesystem::temp_directory_path() / "pageforge-table-index-range-test.db";
+  std::filesystem::remove(path);
+  {
+    auto heap = HeapFile::create(path);
+    BufferPool pool(heap, 4);
+    RecordStore records(pool);
+    Catalog catalog(records);
+    (void)catalog.create_table({"items", {{"score", pageforge::DataType::Integer, true},
+                                           {"name", pageforge::DataType::Text, false}},
+                                1});
+    TableStore tables(records, catalog);
+    const auto low = tables.insert("items", {std::int64_t{3}, std::string("low")});
+    const auto first = tables.insert("items", {std::int64_t{7}, std::string("first")});
+    const auto second = tables.insert("items", {std::int64_t{7}, std::string("second")});
+    const auto high = tables.insert("items", {std::int64_t{9}, std::string("high")});
+    (void)tables.insert("items", {std::monostate{}, std::string("unscored")});
+    (void)tables.create_index("items_score_idx", "items", "score");
+    const auto definition = catalog.find_index("items_score_idx");
+    check(definition.has_value(), "typed range test index should be registered");
+
+    const auto bounded = tables.lookup_index_range("items_score_idx", 7, 9);
+    check(bounded.size() == 3 && bounded[0].id == first && bounded[1].id == second &&
+              bounded[2].id == high,
+          "inclusive typed index ranges should retain key and record ordering");
+    const auto prefix = tables.lookup_index_range("items_score_idx", std::nullopt, 3);
+    check(prefix.size() == 1 && prefix[0].id == low,
+          "typed index ranges should support an unbounded lower endpoint");
+    const auto all = tables.lookup_index_range("items_score_idx", std::nullopt, std::nullopt);
+    check(all.size() == 4, "unbounded typed index ranges should omit nullable keys");
+    check_throws<std::invalid_argument>(
+        [&] { (void)tables.lookup_index_range("items_score_idx", 9, 7); },
+        "typed index ranges should reject reversed endpoints");
+
+    auto index = BPlusTreeIndex::open(records, definition->header_id);
+    check(index.insert(8, low), "test should inject a mismatched range entry");
+    check_throws<TableCorruption>(
+        [&] { (void)tables.lookup_index_range("items_score_idx", 8, 8); },
+        "typed index ranges should reject entries whose keys disagree with their rows");
+  }
+  std::filesystem::remove(path);
+}
+
 void typed_tables_reject_corrupt_owned_indexes_before_writes() {
   const auto path = std::filesystem::temp_directory_path() / "pageforge-table-index-corruption-test.db";
   std::filesystem::remove(path);
@@ -1726,6 +1769,7 @@ int main() {
       {"typed table input and ownership validation", typed_tables_validate_input_and_ownership},
       {"typed table automatic index maintenance", typed_tables_maintain_registered_indexes},
       {"typed table existing-row index build", typed_tables_build_indexes_for_existing_rows},
+      {"typed table validated index ranges", typed_tables_read_validated_index_ranges},
       {"typed table index corruption safety", typed_tables_reject_corrupt_owned_indexes_before_writes},
       {"typed table corruption detection", typed_tables_detect_corrupt_envelopes},
       {"query filter, projection, and limit", query_pipeline_filters_projects_and_limits},

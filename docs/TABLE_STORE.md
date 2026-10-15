@@ -36,6 +36,9 @@ damaged tree cannot silently create unindexed data.
 `lookup_index(name, key)` performs an exact signed-integer lookup and returns
 decoded `TableRow` values. It cross-checks every hit against catalog ownership,
 the row's table envelope, and the indexed column value before returning it.
+`lookup_index_range(name, lower, upper)` applies the same checks to an inclusive
+range; either optional endpoint can be unbounded, and results retain B+ tree key
+and record-ID order.
 
 `create_index(name, table, column)` builds an integer B+ tree from all existing
 non-null table rows before registering it in the catalog. Duplicate keys remain
@@ -83,3 +86,8 @@ can still interrupt a multi-record update. There is no schema migration,
 transaction, or concurrent writer support yet. A deleted record ID can be
 reused by a later insert, so callers must not treat old IDs as permanent
 external keys.
+
+The typed range API is available to storage-layer callers, but SQL planning
+currently selects indexes only for exact integer equality. Range predicates
+continue to use a table scan until bound selection and `EXPLAIN` expose range
+access paths.

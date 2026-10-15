@@ -45,7 +45,7 @@ planner changing when the index is created.
 make check
 ```
 
-Explain that the command compiles with warnings treated as errors, runs 48
+Explain that the command compiles with warnings treated as errors, runs 49
 unit tests, exercises the complete CLI and ready-made demo database, and
 validates the benchmark contract.
 
@@ -106,7 +106,7 @@ safety.
 
 - Built a C++20 relational database engine with checksummed slotted pages,
   clock-sweep buffering, typed catalogs and tuples, streaming SQL operators,
-  and persistent B+ tree indexes; verified by 48 unit tests plus CLI and
+  and persistent B+ tree indexes; verified by 49 unit tests plus CLI and
   benchmark integration checks.
 - Added query-plan introspection and existing-row index construction, then
   optimized append-heavy record placement from 784 ms to a 70 ms median for a

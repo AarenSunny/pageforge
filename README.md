@@ -23,6 +23,7 @@ compaction, a durable heap file, a buffer manager, and typed catalog metadata.
 - Persistent table catalog with named, versioned schemas and duplicate detection
 - Persistent B+ tree catalog ownership bound to validated integer columns
 - Existing-row B+ tree construction through the typed table layer
+- Corruption-checked typed-table exact and inclusive range index lookups
 - Typed table rows with schema-bound operations and automatic index maintenance
 - Streaming record and typed-table cursors without materializing row sets
 - Composable filter, stable sort, projection, and limit query operators
