@@ -204,12 +204,25 @@ void print_query(pageforge::BoundSelect result) {
 }
 
 void print_explanation(const pageforge::SelectExplanation& explanation) {
-  std::cout << (explanation.access_path == pageforge::SelectAccessPath::IndexLookup
-                    ? "INDEX_LOOKUP"
-                    : "TABLE_SCAN")
-            << " table=" << explanation.table;
+  const auto path = [&]() {
+    switch (explanation.access_path) {
+      case pageforge::SelectAccessPath::TableScan: return "TABLE_SCAN";
+      case pageforge::SelectAccessPath::IndexLookup: return "INDEX_LOOKUP";
+      case pageforge::SelectAccessPath::IndexRange: return "INDEX_RANGE";
+    }
+    return "TABLE_SCAN";
+  };
+  std::cout << path() << " table=" << explanation.table;
   if (explanation.index_name) std::cout << " index=" << *explanation.index_name;
   if (explanation.lookup_key) std::cout << " key=" << *explanation.lookup_key;
+  if (explanation.access_path == pageforge::SelectAccessPath::IndexRange) {
+    std::cout << " lower=";
+    if (explanation.lower_bound) std::cout << *explanation.lower_bound;
+    else std::cout << "none";
+    std::cout << " upper=";
+    if (explanation.upper_bound) std::cout << *explanation.upper_bound;
+    else std::cout << "none";
+  }
   std::cout << " predicates=" << explanation.predicate_count
             << " residual_predicates=" << explanation.residual_predicate_count
             << " sort=" << (explanation.sorts_rows ? "true" : "false") << " limit=";

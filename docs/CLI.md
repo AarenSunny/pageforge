@@ -56,11 +56,14 @@ and arbitrary expressions are intentionally rejected for now. A single
 `create-index` resolves table and column names case-insensitively, backfills all
 existing non-null integer keys, persists ownership in the catalog, and enables
 automatic maintenance for later writes. `EXPLAIN SELECT` reports the resolved
-table scan or exact-equality index lookup without running the query operator
-pipeline. Its `residual_predicates` field makes post-lookup filtering explicit:
-an indexed equality removes one predicate from that count, while table scans
-leave every predicate residual. Range and non-integer predicates intentionally
-remain table scans.
+table scan, exact-equality lookup, or single-predicate integer range without
+running the query operator pipeline. Range output includes inclusive candidate
+bounds; strict comparisons recheck the boundary through the ordinary filter.
+Its `residual_predicates` field makes post-access filtering explicit: the
+equality or inclusive bound that the index fully covers is removed from that
+count. A strict range remains residual for its boundary recheck, while table
+scans leave every predicate residual. Non-integer, null-test, and `!=`
+predicates remain table scans.
 
 ## Interactive shell
 

@@ -1485,8 +1485,33 @@ void sql_execution_uses_indexed_equality_lookups() {
 
     auto range_scan = pageforge::execute_select_sql(
         tables, catalog, "SELECT id FROM Items WHERE id >= 2");
-    check(range_scan.access_path() == pageforge::SelectAccessPath::TableScan,
-          "range predicates should not claim unsupported index planning");
+    check(range_scan.access_path() == pageforge::SelectAccessPath::IndexRange &&
+              range_scan.index_name() == std::optional<std::string>{"items_id_idx"},
+          "integer range predicates should choose the matching catalog-owned index");
+    const auto first_range_row = range_scan.next();
+    const auto second_range_row = range_scan.next();
+    check(first_range_row && second_range_row &&
+              first_range_row->values == pageforge::Tuple{std::int64_t{2}} &&
+              second_range_row->values == pageforge::Tuple{std::int64_t{2}} && !range_scan.next(),
+          "range candidates should pass through predicate filtering and projection");
+
+    auto strict_range = pageforge::execute_select_sql(
+        tables, catalog, "SELECT id FROM Items WHERE id > 2");
+    check(strict_range.access_path() == pageforge::SelectAccessPath::IndexRange &&
+              !strict_range.next(),
+          "strict range predicates should filter the conservatively included boundary key");
+
+    auto upper_range = pageforge::execute_select_sql(
+        tables, catalog, "SELECT id FROM Items WHERE id <= 1");
+    const auto upper_row = upper_range.next();
+    check(upper_range.access_path() == pageforge::SelectAccessPath::IndexRange && upper_row &&
+              upper_row->id == one_id && !upper_range.next(),
+          "upper-bounded predicates should use the index without losing matching rows");
+
+    auto unequal_scan = pageforge::execute_select_sql(
+        tables, catalog, "SELECT id FROM Items WHERE id != 2");
+    check(unequal_scan.access_path() == pageforge::SelectAccessPath::TableScan,
+          "non-contiguous inequality predicates should retain a table scan");
 
     check(index.insert(999, one_id), "test should be able to inject a stale logical index entry");
     check_throws<TableCorruption>([&] { (void)tables.lookup_index("items_id_idx", 999); },
@@ -1531,6 +1556,28 @@ void sql_explain_reports_access_paths_without_running_rows() {
     check(residual.access_path == pageforge::SelectAccessPath::IndexLookup &&
               residual.predicate_count == 2 && residual.residual_predicate_count == 1,
           "EXPLAIN should separate the lookup predicate from residual filters");
+
+    const auto range = pageforge::explain_select(
+        catalog, pageforge::parse_select("SELECT name FROM items WHERE id >= 7"));
+    check(range.access_path == pageforge::SelectAccessPath::IndexRange &&
+              range.index_name == std::optional<std::string>{"items_id_idx"} &&
+              range.lower_bound == std::optional<std::int64_t>{7} && !range.upper_bound &&
+              !range.lookup_key && range.predicate_count == 1 &&
+              range.residual_predicate_count == 0,
+          "EXPLAIN should report inclusive index-range candidate bounds");
+
+    const auto strict = pageforge::explain_select(
+        catalog, pageforge::parse_select("SELECT name FROM items WHERE id < 7"));
+    check(strict.access_path == pageforge::SelectAccessPath::IndexRange &&
+              !strict.lower_bound && strict.upper_bound == std::optional<std::int64_t>{7} &&
+              strict.residual_predicate_count == 1,
+          "EXPLAIN should report an upper bound and retain its strict boundary recheck");
+
+    const auto equality_preferred = pageforge::explain_select(
+        catalog, pageforge::parse_select("SELECT name FROM items WHERE id >= 1 AND id = 7"));
+    check(equality_preferred.access_path == pageforge::SelectAccessPath::IndexLookup &&
+              equality_preferred.lookup_key == std::optional<std::int64_t>{7},
+          "exact lookups should take priority over wider range predicates");
 
     auto execution = pageforge::execute_sql(
         tables, catalog, "EXPLAIN SELECT name FROM items WHERE id = 7");

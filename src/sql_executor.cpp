@@ -130,26 +130,55 @@ RowLess bind_order(const Schema& schema, const SqlOrder& order) {
   };
 }
 
-struct IndexLookup {
+struct IndexAccess {
+  SelectAccessPath path;
   std::string name;
-  std::int64_t key;
+  std::optional<std::int64_t> key;
+  std::optional<std::int64_t> lower;
+  std::optional<std::int64_t> upper;
+  bool covers_predicate;
 };
 
-std::optional<IndexLookup> choose_index(Catalog& catalog, const TableDefinition& table,
+std::optional<IndexAccess> choose_index(Catalog& catalog, const TableDefinition& table,
                                         const std::vector<SqlPredicate>& predicates) {
   const auto indexes = catalog.list_indexes();
-  for (const auto& predicate : predicates) {
+  const auto matching_index = [&](const SqlPredicate& predicate) -> std::optional<std::string> {
     if (predicate.kind != SqlPredicateKind::Comparison ||
-        predicate.comparison != SqlComparison::Equal ||
         !std::holds_alternative<std::int64_t>(predicate.literal)) {
-      continue;
+      return std::nullopt;
     }
     const auto column_index = resolve_column(table.schema, predicate.column);
-    if (table.schema[column_index].type != DataType::Integer) continue;
+    if (table.schema[column_index].type != DataType::Integer) return std::nullopt;
     for (const auto& index : indexes) {
       if (index.table == table.name && index.column == table.schema[column_index].name) {
-        return IndexLookup{index.name, std::get<std::int64_t>(predicate.literal)};
+        return index.name;
       }
+    }
+    return std::nullopt;
+  };
+
+  for (const auto& predicate : predicates) {
+    if (predicate.comparison != SqlComparison::Equal) continue;
+    if (auto index = matching_index(predicate)) {
+      return IndexAccess{SelectAccessPath::IndexLookup, std::move(*index),
+                         std::get<std::int64_t>(predicate.literal), std::nullopt, std::nullopt, true};
+    }
+  }
+
+  for (const auto& predicate : predicates) {
+    if (predicate.comparison == SqlComparison::Equal ||
+        predicate.comparison == SqlComparison::NotEqual) {
+      continue;
+    }
+    if (auto index = matching_index(predicate)) {
+      const auto key = std::get<std::int64_t>(predicate.literal);
+      const bool has_lower = predicate.comparison == SqlComparison::Greater ||
+                             predicate.comparison == SqlComparison::GreaterEqual;
+      const bool inclusive = predicate.comparison == SqlComparison::GreaterEqual ||
+                             predicate.comparison == SqlComparison::LessEqual;
+      return IndexAccess{SelectAccessPath::IndexRange, std::move(*index), std::nullopt,
+                         has_lower ? std::optional<std::int64_t>{key} : std::nullopt,
+                         has_lower ? std::nullopt : std::optional<std::int64_t>{key}, inclusive};
     }
   }
   return std::nullopt;
@@ -161,7 +190,7 @@ struct AnalyzedSelect {
   std::optional<RowLess> order;
   Schema output_schema;
   std::optional<std::vector<std::size_t>> projection;
-  std::optional<IndexLookup> lookup;
+  std::optional<IndexAccess> access;
 };
 
 AnalyzedSelect analyze_select(Catalog& catalog, const SelectPlan& plan) {
@@ -192,43 +221,53 @@ AnalyzedSelect analyze_select(Catalog& catalog, const SelectPlan& plan) {
     }
   }
 
-  auto lookup = choose_index(catalog, table, plan.predicates);
+  auto access = choose_index(catalog, table, plan.predicates);
   return {std::move(table), std::move(predicates), std::move(order), std::move(output_schema),
-          std::move(projection), std::move(lookup)};
+          std::move(projection), std::move(access)};
 }
 
 }  // namespace
 
 BoundSelect bind_select(TableStore& tables, Catalog& catalog, const SelectPlan& plan) {
   auto analyzed = analyze_select(catalog, plan);
-  auto query = analyzed.lookup
-                   ? Query::from_rows(
-                         tables.lookup_index(analyzed.lookup->name, analyzed.lookup->key),
-                         analyzed.table.schema.size())
-                   : Query::from(tables, analyzed.table.name);
+  auto make_query = [&]() {
+    if (!analyzed.access) return Query::from(tables, analyzed.table.name);
+    if (analyzed.access->path == SelectAccessPath::IndexLookup) {
+      return Query::from_rows(
+          tables.lookup_index(analyzed.access->name, *analyzed.access->key),
+          analyzed.table.schema.size());
+    }
+    return Query::from_rows(
+        tables.lookup_index_range(analyzed.access->name, analyzed.access->lower,
+                                  analyzed.access->upper),
+        analyzed.table.schema.size());
+  };
+  auto query = make_query();
   for (auto& predicate : analyzed.predicates) query.filter(std::move(predicate));
   if (analyzed.order) query.sort(std::move(*analyzed.order));
   if (analyzed.projection) query.project(std::move(*analyzed.projection));
   if (plan.limit) query.limit(*plan.limit);
   return BoundSelect(
       std::move(query), std::move(analyzed.output_schema),
-      analyzed.lookup ? SelectAccessPath::IndexLookup : SelectAccessPath::TableScan,
-      analyzed.lookup ? std::optional<std::string>{analyzed.lookup->name} : std::nullopt);
+      analyzed.access ? analyzed.access->path : SelectAccessPath::TableScan,
+      analyzed.access ? std::optional<std::string>{analyzed.access->name} : std::nullopt);
 }
 
 SelectExplanation explain_select(Catalog& catalog, const SelectPlan& plan) {
   auto analyzed = analyze_select(catalog, plan);
   SelectExplanation explanation;
   explanation.table = std::move(analyzed.table.name);
-  explanation.access_path =
-      analyzed.lookup ? SelectAccessPath::IndexLookup : SelectAccessPath::TableScan;
-  if (analyzed.lookup) {
-    explanation.index_name = std::move(analyzed.lookup->name);
-    explanation.lookup_key = analyzed.lookup->key;
+  explanation.access_path = analyzed.access ? analyzed.access->path : SelectAccessPath::TableScan;
+  if (analyzed.access) {
+    explanation.index_name = std::move(analyzed.access->name);
+    explanation.lookup_key = analyzed.access->key;
+    explanation.lower_bound = analyzed.access->lower;
+    explanation.upper_bound = analyzed.access->upper;
   }
   explanation.predicate_count = plan.predicates.size();
-  explanation.residual_predicate_count =
-      plan.predicates.size() - static_cast<std::size_t>(analyzed.lookup.has_value());
+  explanation.residual_predicate_count = plan.predicates.size() -
+                                         static_cast<std::size_t>(
+                                             analyzed.access && analyzed.access->covers_predicate);
   explanation.sorts_rows = plan.order.has_value();
   explanation.limit = plan.limit;
   return explanation;

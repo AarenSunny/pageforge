@@ -19,13 +19,15 @@ class SqlBindError final : public std::runtime_error {
   using std::runtime_error::runtime_error;
 };
 
-enum class SelectAccessPath { TableScan, IndexLookup };
+enum class SelectAccessPath { TableScan, IndexLookup, IndexRange };
 
 struct SelectExplanation {
   std::string table;
   SelectAccessPath access_path = SelectAccessPath::TableScan;
   std::optional<std::string> index_name;
   std::optional<std::int64_t> lookup_key;
+  std::optional<std::int64_t> lower_bound;
+  std::optional<std::int64_t> upper_bound;
   std::size_t predicate_count = 0;
   std::size_t residual_predicate_count = 0;
   bool sorts_rows = false;

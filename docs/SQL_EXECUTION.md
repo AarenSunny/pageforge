@@ -18,11 +18,12 @@ while (auto row = result.next()) {
 }
 ```
 
-For an integer equality predicate, the binder looks for a registered B+ tree
-on the resolved table and column. When one exists, only matching record IDs are
-loaded before the ordinary filter pipeline runs. All predicates—including the
-one used for lookup—are still evaluated against decoded rows, so residual
-filters and SQL null semantics remain unchanged. The selected path is visible
+For an integer equality or ordering predicate, the binder looks for a
+registered B+ tree on the resolved table and column. When one exists, only
+exact or range candidate record IDs are loaded before the ordinary filter
+pipeline runs. All predicates—including the one used for index access—are
+still evaluated against decoded rows, so strict range boundaries, residual
+filters, and SQL null semantics remain unchanged. The selected path is visible
 on a bound query, and `EXPLAIN SELECT` exposes it without constructing a table
 cursor or loading index hits:
 
@@ -32,16 +33,17 @@ if (result.access_path() == pageforge::SelectAccessPath::IndexLookup) {
 }
 
 auto explanation = pageforge::explain_select(catalog, plan);
-// explanation contains TABLE_SCAN or INDEX_LOOKUP, the resolved table,
-// optional index and key, total and residual predicate counts, the sort
-// requirement, and the limit.
+// explanation contains TABLE_SCAN, INDEX_LOOKUP, or INDEX_RANGE; the resolved
+// table; optional index, key, or inclusive candidate bounds; total and residual
+// predicate counts; the sort requirement; and the limit.
 ```
 
-Index selection follows predicate order and catalog creation order. Range,
-inequality, null-test, text, and boolean predicates currently retain a table
-scan. An equality lookup validates that every index hit still exists, belongs
-to the indexed table, and contains the indexed key; stale logical entries fail
-as table corruption rather than returning the wrong row.
+Exact equality is preferred over range access even when its predicate appears
+later. Otherwise, range selection follows predicate order and catalog creation
+order. Non-contiguous inequality, null-test, text, and boolean predicates
+retain a table scan. Every indexed candidate is validated to still exist,
+belong to the indexed table, and contain its recorded key; stale logical
+entries fail as table corruption rather than returning the wrong row.
 
 Unquoted table and column names are resolved case-insensitively while the
 catalog's original spelling is retained in output metadata. A case-insensitive
@@ -69,15 +71,19 @@ Sorting is stable but blocking and currently keeps every filtered row in memory.
 `EXPLAIN SELECT` statements to `SelectExplanation`. Explanation still performs
 full parsing and binding, so invalid tables, columns, literal types, and sort
 keys fail exactly as they do for execution; it stops before creating a table
-cursor or performing the planned index lookup.
+cursor or performing the planned index read.
 
 Execution remains single-threaded. Table scans inherit the underlying cursor's
-non-snapshot behavior; index lookups materialize matching rows before the
+non-snapshot behavior; index accesses materialize candidate rows before the
 operator pipeline begins. The CLI exposes both paths through its `query`
 command. Query rows use escaped, tab-separated text, while explanations emit
 one stable line such as
 `INDEX_LOOKUP table=people index=people_id_idx key=7 predicates=2 residual_predicates=1 sort=false limit=none`.
-For an index lookup, `residual_predicates` excludes the single equality
-predicate used to select index candidates; those filters still run alongside
-the lookup predicate during execution. For a table scan, every predicate is
-residual because the access path does not narrow the candidate rows.
+Range explanations use inclusive candidate bounds, for example
+`INDEX_RANGE table=people index=people_id_idx lower=7 upper=none predicates=1 residual_predicates=0 sort=false limit=none`.
+For an index access, `residual_predicates` excludes an equality or inclusive
+bound that the access path fully covers; all filters still run during execution
+as a safety check. Strict `<` and `>` ranges conservatively include the boundary
+key and remain residual so their filter can remove it, which avoids overflow at
+signed-integer extremes. A table scan marks every predicate as residual because
+its access path does not narrow candidate rows.

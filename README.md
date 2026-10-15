@@ -30,7 +30,7 @@ compaction, a durable heap file, a buffer manager, and typed catalog metadata.
 - Position-aware SQL lexer with literals, comparisons, and comments
 - Strict `SELECT` parser with conjunctive predicates and explicit null tests
 - Catalog-bound SQL execution with typed filters and `ORDER BY`
-- Index-aware SQL planning for exact integer equality predicates
+- Index-aware SQL planning for integer equality and single-predicate ranges
 - Non-executing `EXPLAIN SELECT` output for access paths and residual filters
 - CLI for typed writes, SQL queries, and an introspective interactive shell
 - Multi-stage, non-root Docker image with cross-container persistence tests
@@ -122,7 +122,8 @@ and current routing boundary.
 - [x] Automatic B+ tree maintenance for typed-table inserts and deletes
 - [x] Exact-equality index selection with residual predicate validation
 - [x] Non-executing `EXPLAIN SELECT` plan introspection
-- [ ] Recursive internal splits and range-aware index planning
+- [x] Single-predicate integer range index selection
+- [ ] Recursive internal splits and conjunctive range-bound merging
 - [x] Typed tuple encoding and corruption validation
 - [x] Catalog metadata and schema persistence
 - [x] Typed table rows with logical table isolation

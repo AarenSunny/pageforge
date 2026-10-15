@@ -94,8 +94,8 @@ safety.
 
 - Slotted pages preserve record IDs while compacting variable-length payloads.
 - The buffer pool uses clock-sweep eviction and RAII pin guards.
-- Equality predicates can use a height-two B+ tree; ranges still scan because
-  range-aware planning and recursive internal splits are future work.
+- Equality and single integer-range predicates can use a height-two B+ tree;
+  conjunctive bound merging and recursive internal splits are future work.
 - The insertion-page hint improved one controlled 1,000-row development run
   from 784,030 microseconds to a 70,139-microsecond median after the change.
 - Index construction is single-threaded and non-transactional. Failed builds
