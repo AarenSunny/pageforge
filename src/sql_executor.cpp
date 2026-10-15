@@ -136,7 +136,7 @@ struct IndexAccess {
   std::optional<std::int64_t> key;
   std::optional<std::int64_t> lower;
   std::optional<std::int64_t> upper;
-  bool covers_predicate;
+  std::size_t covered_predicates;
 };
 
 std::optional<IndexAccess> choose_index(Catalog& catalog, const TableDefinition& table,
@@ -161,10 +161,11 @@ std::optional<IndexAccess> choose_index(Catalog& catalog, const TableDefinition&
     if (predicate.comparison != SqlComparison::Equal) continue;
     if (auto index = matching_index(predicate)) {
       return IndexAccess{SelectAccessPath::IndexLookup, std::move(*index),
-                         std::get<std::int64_t>(predicate.literal), std::nullopt, std::nullopt, true};
+                         std::get<std::int64_t>(predicate.literal), std::nullopt, std::nullopt, 1};
     }
   }
 
+  std::optional<IndexAccess> range;
   for (const auto& predicate : predicates) {
     if (predicate.comparison == SqlComparison::Equal ||
         predicate.comparison == SqlComparison::NotEqual) {
@@ -176,12 +177,26 @@ std::optional<IndexAccess> choose_index(Catalog& catalog, const TableDefinition&
                              predicate.comparison == SqlComparison::GreaterEqual;
       const bool inclusive = predicate.comparison == SqlComparison::GreaterEqual ||
                              predicate.comparison == SqlComparison::LessEqual;
-      return IndexAccess{SelectAccessPath::IndexRange, std::move(*index), std::nullopt,
-                         has_lower ? std::optional<std::int64_t>{key} : std::nullopt,
-                         has_lower ? std::nullopt : std::optional<std::int64_t>{key}, inclusive};
+      if (!range) {
+        range = IndexAccess{SelectAccessPath::IndexRange, std::move(*index), std::nullopt,
+                            has_lower ? std::optional<std::int64_t>{key} : std::nullopt,
+                            has_lower ? std::nullopt : std::optional<std::int64_t>{key},
+                            static_cast<std::size_t>(inclusive)};
+        continue;
+      }
+      if (range->name != *index) continue;
+
+      auto lower = range->lower;
+      auto upper = range->upper;
+      if (has_lower && (!lower || key > *lower)) lower = key;
+      if (!has_lower && (!upper || key < *upper)) upper = key;
+      if (lower && upper && *lower > *upper) continue;
+      range->lower = lower;
+      range->upper = upper;
+      range->covered_predicates += static_cast<std::size_t>(inclusive);
     }
   }
-  return std::nullopt;
+  return range;
 }
 
 struct AnalyzedSelect {
@@ -266,8 +281,7 @@ SelectExplanation explain_select(Catalog& catalog, const SelectPlan& plan) {
   }
   explanation.predicate_count = plan.predicates.size();
   explanation.residual_predicate_count = plan.predicates.size() -
-                                         static_cast<std::size_t>(
-                                             analyzed.access && analyzed.access->covers_predicate);
+                                         (analyzed.access ? analyzed.access->covered_predicates : 0);
   explanation.sorts_rows = plan.order.has_value();
   explanation.limit = plan.limit;
   return explanation;

@@ -87,8 +87,9 @@ transaction, or concurrent writer support yet. A deleted record ID can be
 reused by a later insert, so callers must not treat old IDs as permanent
 external keys.
 
-SQL planning uses the typed range API for one integer ordering predicate and
-exposes its inclusive candidate bound through `EXPLAIN`. Strict comparisons
-include the boundary key in the candidate range and remove it through the
-ordinary predicate filter, avoiding signed-integer overflow at minimum and
-maximum keys. Conjunctive range-bound merging remains future work.
+SQL planning uses the typed range API for compatible integer ordering
+predicates on one selected index and exposes the merged inclusive candidate
+bounds through `EXPLAIN`. Strict comparisons include the boundary key in the
+candidate range and remove it through the ordinary predicate filter, avoiding
+signed-integer overflow at minimum and maximum keys. Incompatible bounds stay
+as residual filters instead of producing an invalid storage range.

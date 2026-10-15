@@ -19,9 +19,10 @@ while (auto row = result.next()) {
 ```
 
 For an integer equality or ordering predicate, the binder looks for a
-registered B+ tree on the resolved table and column. When one exists, only
+registered B+ tree on the resolved table and column. Compatible ordering
+predicates on that index merge into one lower and upper candidate range. Only
 exact or range candidate record IDs are loaded before the ordinary filter
-pipeline runs. All predicates—including the one used for index access—are
+pipeline runs. All predicates—including those used for index access—are
 still evaluated against decoded rows, so strict range boundaries, residual
 filters, and SQL null semantics remain unchanged. The selected path is visible
 on a bound query, and `EXPLAIN SELECT` exposes it without constructing a table
@@ -39,11 +40,14 @@ auto explanation = pageforge::explain_select(catalog, plan);
 ```
 
 Exact equality is preferred over range access even when its predicate appears
-later. Otherwise, range selection follows predicate order and catalog creation
-order. Non-contiguous inequality, null-test, text, and boolean predicates
-retain a table scan. Every indexed candidate is validated to still exist,
-belong to the indexed table, and contain its recorded key; stale logical
-entries fail as table corruption rather than returning the wrong row.
+later. Otherwise, the first usable range predicate selects an index, and later
+compatible bounds for that same index are merged. A bound that would cross the
+current range remains residual, preserving correct empty-query behavior without
+passing invalid bounds to storage. Non-contiguous inequality, null-test, text,
+and boolean predicates retain a table scan. Every indexed candidate is
+validated to still exist, belong to the indexed table, and contain its recorded
+key; stale logical entries fail as table corruption rather than returning the
+wrong row.
 
 Unquoted table and column names are resolved case-insensitively while the
 catalog's original spelling is retained in output metadata. A case-insensitive
@@ -81,9 +85,10 @@ one stable line such as
 `INDEX_LOOKUP table=people index=people_id_idx key=7 predicates=2 residual_predicates=1 sort=false limit=none`.
 Range explanations use inclusive candidate bounds, for example
 `INDEX_RANGE table=people index=people_id_idx lower=7 upper=none predicates=1 residual_predicates=0 sort=false limit=none`.
-For an index access, `residual_predicates` excludes an equality or inclusive
+For an index access, `residual_predicates` excludes each compatible inclusive
 bound that the access path fully covers; all filters still run during execution
 as a safety check. Strict `<` and `>` ranges conservatively include the boundary
 key and remain residual so their filter can remove it, which avoids overflow at
-signed-integer extremes. A table scan marks every predicate as residual because
-its access path does not narrow candidate rows.
+signed-integer extremes. Incompatible bounds also remain residual. A table scan
+marks every predicate as residual because its access path does not narrow
+candidate rows.

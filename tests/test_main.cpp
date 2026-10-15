@@ -1508,6 +1508,18 @@ void sql_execution_uses_indexed_equality_lookups() {
               upper_row->id == one_id && !upper_range.next(),
           "upper-bounded predicates should use the index without losing matching rows");
 
+    auto bounded_range = pageforge::execute_select_sql(
+        tables, catalog, "SELECT id FROM Items WHERE id >= 2 AND id <= 2");
+    check(bounded_range.access_path() == pageforge::SelectAccessPath::IndexRange &&
+              bounded_range.next() && bounded_range.next() && !bounded_range.next(),
+          "compatible conjunctive bounds should share one range access path");
+
+    auto contradictory_range = pageforge::execute_select_sql(
+        tables, catalog, "SELECT id FROM Items WHERE id >= 2 AND id <= 1");
+    check(contradictory_range.access_path() == pageforge::SelectAccessPath::IndexRange &&
+              !contradictory_range.next(),
+          "contradictory bounds should remain a valid empty query");
+
     auto unequal_scan = pageforge::execute_select_sql(
         tables, catalog, "SELECT id FROM Items WHERE id != 2");
     check(unequal_scan.access_path() == pageforge::SelectAccessPath::TableScan,
@@ -1572,6 +1584,22 @@ void sql_explain_reports_access_paths_without_running_rows() {
               !strict.lower_bound && strict.upper_bound == std::optional<std::int64_t>{7} &&
               strict.residual_predicate_count == 1,
           "EXPLAIN should report an upper bound and retain its strict boundary recheck");
+
+    const auto bounded = pageforge::explain_select(
+        catalog,
+        pageforge::parse_select("SELECT name FROM items WHERE id > 1 AND id <= 7"));
+    check(bounded.access_path == pageforge::SelectAccessPath::IndexRange &&
+              bounded.lower_bound == std::optional<std::int64_t>{1} &&
+              bounded.upper_bound == std::optional<std::int64_t>{7} &&
+              bounded.predicate_count == 2 && bounded.residual_predicate_count == 1,
+          "EXPLAIN should merge compatible bounds and retain only strict rechecks");
+
+    const auto contradictory = pageforge::explain_select(
+        catalog,
+        pageforge::parse_select("SELECT name FROM items WHERE id >= 8 AND id <= 7"));
+    check(contradictory.lower_bound == std::optional<std::int64_t>{8} &&
+              !contradictory.upper_bound && contradictory.residual_predicate_count == 1,
+          "EXPLAIN should leave an incompatible bound residual instead of creating an invalid range");
 
     const auto equality_preferred = pageforge::explain_select(
         catalog, pageforge::parse_select("SELECT name FROM items WHERE id >= 1 AND id = 7"));
