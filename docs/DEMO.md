@@ -24,6 +24,21 @@ flowchart TD
 The important boundary is that `EXPLAIN SELECT` stops after binding and access
 path selection. It does not create a table cursor or load matching index rows.
 
+## Fast start
+
+To explore an already indexed sample instead of entering the walkthrough data
+by hand:
+
+```bash
+make
+./tools/create_demo_database.sh demo.db
+./build/pageforge demo.db query \
+  "EXPLAIN SELECT name FROM people WHERE id = 3;"
+```
+
+The timed walkthrough below starts from an empty path so it can demonstrate the
+planner changing when the index is created.
+
 ## 0:00–0:40 — Build and verify
 
 ```bash
@@ -31,7 +46,8 @@ make check
 ```
 
 Explain that the command compiles with warnings treated as errors, runs 48
-unit tests, exercises the complete CLI, and validates the benchmark contract.
+unit tests, exercises the complete CLI and ready-made demo database, and
+validates the benchmark contract.
 
 ## 0:40–1:20 — Persist typed rows
 

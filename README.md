@@ -52,6 +52,19 @@ contract.
 For a concise project presentation, follow the
 [three-minute portfolio demo](docs/DEMO.md).
 
+## Create the ready-made demo database
+
+```bash
+make
+./tools/create_demo_database.sh demo.db
+./build/pageforge demo.db query \
+  "SELECT name FROM people WHERE active = TRUE ORDER BY id;"
+```
+
+The generator creates a deterministic typed table, five rows, and an integer
+index suitable for query-plan demos. It refuses to overwrite any existing path
+and removes a partial database only when setup fails after creating it.
+
 ## Try the storage engine
 
 ```bash
@@ -125,7 +138,7 @@ and current routing boundary.
 - [x] Interactive SQL shell with table and schema introspection
 - [x] Multi-stage Docker image and container persistence smoke test
 - [x] Validating benchmark harness with machine-readable metrics
-- [ ] Demo database
+- [x] Reproducible demo database generator and smoke test
 
 Unchecked items are planned milestones rather than current claims.
 

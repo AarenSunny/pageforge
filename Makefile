@@ -8,7 +8,7 @@ TEST_BINARY := build/pageforge_tests
 CLI_BINARY := build/pageforge
 BENCH_BINARY := build/pageforge_bench
 
-.PHONY: all test benchmark benchmark-smoke check clean
+.PHONY: all test demo-smoke benchmark benchmark-smoke check clean
 
 all: $(TEST_BINARY) $(CLI_BINARY) $(BENCH_BINARY)
 
@@ -28,12 +28,15 @@ test: $(TEST_BINARY) $(CLI_BINARY)
 	./$(TEST_BINARY)
 	sh tests/cli_smoke.sh ./$(CLI_BINARY)
 
+demo-smoke: $(CLI_BINARY)
+	sh tests/demo_database_smoke.sh ./$(CLI_BINARY) ./tools/create_demo_database.sh
+
 benchmark: $(BENCH_BINARY)
 
 benchmark-smoke: $(BENCH_BINARY)
 	sh tests/benchmark_smoke.sh ./$(BENCH_BINARY)
 
-check: test benchmark-smoke
+check: test demo-smoke benchmark-smoke
 
 clean:
 	rm -rf build
