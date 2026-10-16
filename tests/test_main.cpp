@@ -1447,6 +1447,11 @@ void sql_execution_rejects_binding_errors() {
     check(contradiction.access_path() == pageforge::SelectAccessPath::IndexRange &&
               !contradiction.next(),
           "contradictory index bounds should return empty without reading a corrupt tree");
+    auto above_domain = pageforge::execute_select_sql(
+        tables, catalog, "SELECT id FROM people WHERE id > 9223372036854775807");
+    check(above_domain.access_path() == pageforge::SelectAccessPath::IndexRange &&
+              !above_domain.next(),
+          "strict bounds beyond the integer domain should not read a corrupt tree");
   }
   std::filesystem::remove(path);
 }
@@ -1586,18 +1591,34 @@ void sql_explain_reports_access_paths_without_running_rows() {
     const auto strict = pageforge::explain_select(
         catalog, pageforge::parse_select("SELECT name FROM items WHERE id < 7"));
     check(strict.access_path == pageforge::SelectAccessPath::IndexRange &&
-              !strict.lower_bound && strict.upper_bound == std::optional<std::int64_t>{7} &&
-              strict.residual_predicate_count == 1,
-          "EXPLAIN should report an upper bound and retain its strict boundary recheck");
+              !strict.lower_bound && strict.upper_bound == std::optional<std::int64_t>{6} &&
+              strict.residual_predicate_count == 0,
+          "EXPLAIN should normalize an integer-exclusive upper bound");
 
     const auto bounded = pageforge::explain_select(
         catalog,
         pageforge::parse_select("SELECT name FROM items WHERE id > 1 AND id <= 7"));
     check(bounded.access_path == pageforge::SelectAccessPath::IndexRange &&
-              bounded.lower_bound == std::optional<std::int64_t>{1} &&
+              bounded.lower_bound == std::optional<std::int64_t>{2} &&
               bounded.upper_bound == std::optional<std::int64_t>{7} &&
-              bounded.predicate_count == 2 && bounded.residual_predicate_count == 1,
-          "EXPLAIN should merge compatible bounds and retain only strict rechecks");
+              bounded.predicate_count == 2 && bounded.residual_predicate_count == 0,
+          "EXPLAIN should merge normalized strict and inclusive bounds");
+
+    const auto above_max = pageforge::explain_select(
+        catalog,
+        pageforge::parse_select("SELECT name FROM items WHERE id > 9223372036854775807"));
+    check(above_max.lower_bound ==
+                  std::optional<std::int64_t>{std::numeric_limits<std::int64_t>::max()} &&
+              above_max.empty_range && above_max.residual_predicate_count == 0,
+          "EXPLAIN should make a greater-than-maximum bound empty without overflowing");
+
+    const auto below_min = pageforge::explain_select(
+        catalog,
+        pageforge::parse_select("SELECT name FROM items WHERE id < -9223372036854775808"));
+    check(below_min.upper_bound ==
+                  std::optional<std::int64_t>{std::numeric_limits<std::int64_t>::min()} &&
+              below_min.empty_range && below_min.residual_predicate_count == 0,
+          "EXPLAIN should make a less-than-minimum bound empty without overflowing");
 
     const auto contradictory = pageforge::explain_select(
         catalog,

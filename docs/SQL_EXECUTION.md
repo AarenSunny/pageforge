@@ -23,8 +23,8 @@ registered B+ tree on the resolved table and column. Compatible ordering
 predicates on that index merge into one lower and upper candidate range. Only
 exact or range candidate record IDs are loaded before the ordinary filter
 pipeline runs. All predicates—including those used for index access—are
-still evaluated against decoded rows, so strict range boundaries, residual
-filters, and SQL null semantics remain unchanged. The selected path is visible
+still evaluated against decoded rows, so safety checks, residual filters, and
+SQL null semantics remain unchanged. The selected path is visible
 on a bound query, and `EXPLAIN SELECT` exposes it without constructing a table
 cursor or loading index hits:
 
@@ -87,10 +87,10 @@ one stable line such as
 `INDEX_LOOKUP table=people index=people_id_idx key=7 predicates=2 residual_predicates=1 sort=false limit=none`.
 Range explanations use inclusive candidate bounds, for example
 `INDEX_RANGE table=people index=people_id_idx lower=7 upper=none predicates=1 residual_predicates=0 sort=false limit=none`.
-For an index access, `residual_predicates` excludes each compatible inclusive
+For an index access, `residual_predicates` excludes every compatible integer
 bound that the access path fully covers; all filters still run during execution
-as a safety check. Strict `<` and `>` ranges conservatively include the boundary
-key and remain residual so their filter can remove it, which avoids overflow at
-signed-integer extremes. Predicates that prove a selected-index range empty are
-fully covered by that short-circuit. A table scan marks every predicate as
-residual because its access path does not narrow candidate rows.
+as a safety check. Strict `<` and `>` bounds become inclusive by retreating or
+advancing one representable integer. A strict bound beyond the signed-integer
+domain, or merged bounds that cross, produces an empty range without opening
+the index. A table scan marks every predicate as residual because its access
+path does not narrow candidate rows.

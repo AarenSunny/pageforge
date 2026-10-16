@@ -1,6 +1,7 @@
 #include "pageforge/sql_executor.hpp"
 
 #include <cstdint>
+#include <limits>
 #include <string>
 #include <utility>
 #include <vector>
@@ -178,13 +179,21 @@ std::optional<IndexAccess> choose_index(Catalog& catalog, const TableDefinition&
       const auto key = std::get<std::int64_t>(predicate.literal);
       const bool has_lower = predicate.comparison == SqlComparison::Greater ||
                              predicate.comparison == SqlComparison::GreaterEqual;
-      const bool inclusive = predicate.comparison == SqlComparison::GreaterEqual ||
-                             predicate.comparison == SqlComparison::LessEqual;
+      const bool strict = predicate.comparison == SqlComparison::Greater ||
+                          predicate.comparison == SqlComparison::Less;
+      const bool impossible =
+          (predicate.comparison == SqlComparison::Greater &&
+           key == std::numeric_limits<std::int64_t>::max()) ||
+          (predicate.comparison == SqlComparison::Less &&
+           key == std::numeric_limits<std::int64_t>::min());
+      const auto bound = impossible || !strict
+                             ? key
+                             : predicate.comparison == SqlComparison::Greater ? key + 1 : key - 1;
       if (!range) {
         range = IndexAccess{SelectAccessPath::IndexRange, std::move(*index), std::nullopt,
-                            has_lower ? std::optional<std::int64_t>{key} : std::nullopt,
-                            has_lower ? std::nullopt : std::optional<std::int64_t>{key},
-                            static_cast<std::size_t>(inclusive), 1, false};
+                            has_lower ? std::optional<std::int64_t>{bound} : std::nullopt,
+                            has_lower ? std::nullopt : std::optional<std::int64_t>{bound}, 1, 1,
+                            impossible};
         continue;
       }
       if (range->name != *index) continue;
@@ -193,11 +202,16 @@ std::optional<IndexAccess> choose_index(Catalog& catalog, const TableDefinition&
         range->covered_predicates = range->selected_predicates;
         continue;
       }
+      if (impossible) {
+        range->empty = true;
+        range->covered_predicates = range->selected_predicates;
+        continue;
+      }
 
       auto lower = range->lower;
       auto upper = range->upper;
-      if (has_lower && (!lower || key > *lower)) lower = key;
-      if (!has_lower && (!upper || key < *upper)) upper = key;
+      if (has_lower && (!lower || bound > *lower)) lower = bound;
+      if (!has_lower && (!upper || bound < *upper)) upper = bound;
       range->lower = lower;
       range->upper = upper;
       if (lower && upper && *lower > *upper) {
@@ -205,7 +219,7 @@ std::optional<IndexAccess> choose_index(Catalog& catalog, const TableDefinition&
         range->covered_predicates = range->selected_predicates;
         continue;
       }
-      range->covered_predicates += static_cast<std::size_t>(inclusive);
+      ++range->covered_predicates;
     }
   }
   return range;
