@@ -24,6 +24,7 @@ compaction, a durable heap file, a buffer manager, and typed catalog metadata.
 - Persistent B+ tree catalog ownership bound to validated integer columns
 - Existing-row B+ tree construction through the typed table layer
 - Corruption-checked typed-table exact and inclusive range index lookups
+- CLI index verification for reachable row ownership and key agreement
 - Typed table rows with schema-bound operations and automatic index maintenance
 - Streaming record and typed-table cursors without materializing row sets
 - Composable filter, stable sort, projection, and limit query operators
@@ -78,6 +79,7 @@ make
 ./build/pageforge demo.db insert people 3 Bob false analyst
 ./build/pageforge demo.db query "EXPLAIN SELECT name FROM people WHERE id = 2"
 ./build/pageforge demo.db create-index people_id_idx people id
+./build/pageforge demo.db verify-index people_id_idx
 ./build/pageforge demo.db query "EXPLAIN SELECT name FROM people WHERE id = 2"
 ./build/pageforge demo.db query \
   "SELECT name, id FROM people WHERE active = TRUE ORDER BY id DESC LIMIT 10;"
@@ -89,7 +91,8 @@ an existing path. `create-table` accepts `int`, `text`, and `bool` columns, with
 `?` marking nullable columns. `insert` parses values from the stored schema and
 uses uppercase `NULL` for null. `query` prints an escaped, tab-separated result;
 `query` also explains a validated plan without executing it. `create-index`
-backfills existing integer keys, and `shell` adds `.tables` and `.schema`
+backfills existing integer keys. `verify-index` traverses every reachable entry
+and checks its typed row, table ownership, and indexed key. `shell` adds `.tables` and `.schema`
 introspection for live demos. Low-level
 `put`, `get`, `erase`, and `list` commands remain available for raw record
 inspection. See [docs/CLI.md](docs/CLI.md) for the complete command and output

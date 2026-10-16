@@ -25,6 +25,7 @@ void usage() {
                "  init                              Create a new database\n"
                "  create-table <table> <name:type>... Create a typed table\n"
                "  create-index <index> <table> <column> Build an integer B+ tree index\n"
+               "  verify-index <index>              Validate all reachable index entries\n"
                "  insert <table> <value>...          Insert a typed row\n"
                "  query <sql>                        Execute SELECT or EXPLAIN SELECT\n"
                "  shell                              Start the interactive SQL shell\n"
@@ -133,6 +134,17 @@ pageforge::TableDefinition resolve_table(pageforge::Catalog& catalog, std::strin
     found = table;
   }
   if (!found) throw std::out_of_range("table not found");
+  return std::move(*found);
+}
+
+pageforge::IndexDefinition resolve_index(pageforge::Catalog& catalog, std::string_view name) {
+  std::optional<pageforge::IndexDefinition> found;
+  for (const auto& index : catalog.list_indexes()) {
+    if (!equal_name(index.name, name)) continue;
+    if (found) throw std::invalid_argument("ambiguous index name");
+    found = index;
+  }
+  if (!found) throw std::out_of_range("index not found");
   return std::move(*found);
 }
 
@@ -344,7 +356,8 @@ int run(int argc, char* argv[]) {
     return 0;
   }
 
-  const bool one_argument = command == "put" || command == "get" || command == "erase" || command == "query";
+  const bool one_argument = command == "put" || command == "get" || command == "erase" ||
+                            command == "query" || command == "verify-index";
   const bool no_argument = command == "list" || command == "shell";
   const bool variable_arguments = command == "create-table" || command == "insert";
   const bool three_arguments = command == "create-index";
@@ -420,6 +433,10 @@ int run(int argc, char* argv[]) {
     pool.flush_all();
     std::cout << "created index " << index_name << " on " << table.name << '(' << *column_name
               << ")\n";
+  } else if (command == "verify-index") {
+    const auto index = resolve_index(catalog, argv[3]);
+    const auto rows = tables.lookup_index_range(index.name, std::nullopt, std::nullopt);
+    std::cout << "verified index " << index.name << " rows=" << rows.size() << '\n';
   } else if (command == "insert") {
     const auto table = resolve_table(catalog, argv[3]);
     if (static_cast<std::size_t>(argc - 4) != table.schema.size()) {

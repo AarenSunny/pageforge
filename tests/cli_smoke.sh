@@ -78,6 +78,8 @@ special=$(printf 'Tab\tName\\Path')
 [ "$("$cli" "$database" query "EXPLAIN SELECT name FROM people WHERE id = 2")" = \
   "TABLE_SCAN table=People predicates=1 residual_predicates=1 sort=false limit=none" ]
 "$cli" "$database" create-index people_id_idx people id >/dev/null
+[ "$("$cli" "$database" verify-index PEOPLE_ID_IDX)" = \
+  "verified index people_id_idx rows=5" ]
 [ "$("$cli" "$database" query "EXPLAIN SELECT name FROM people WHERE id = 2")" = \
   "INDEX_LOOKUP table=People index=people_id_idx key=2 predicates=1 residual_predicates=0 sort=false limit=none" ]
 [ "$("$cli" "$database" query "EXPLAIN SELECT name FROM people WHERE id >= 2 ORDER BY name LIMIT 3")" = \
@@ -124,6 +126,10 @@ if "$cli" "$database" create-index people_name_idx people name >/dev/null 2>&1; 
   echo "non-integer index was accepted" >&2
   exit 1
 fi
+if "$cli" "$database" verify-index missing_index >/dev/null 2>&1; then
+  echo "unknown index was accepted for verification" >&2
+  exit 1
+fi
 if "$cli" "$database" insert people 4 only-two >/dev/null 2>&1; then
   echo "row with wrong arity was accepted" >&2
   exit 1
@@ -136,4 +142,4 @@ if "$cli" "$database" query "SELECT missing FROM people" >/dev/null 2>&1; then
   echo "query with unknown column was accepted" >&2
   exit 1
 fi
-echo "PASS  CLI raw records, typed tables, SQL, interactive shell, and validation"
+echo "PASS  CLI raw records, typed tables, index verification, SQL, interactive shell, and validation"

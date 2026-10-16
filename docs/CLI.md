@@ -8,6 +8,7 @@ database for every operation, making persistence visible across processes.
 pageforge <database> init
 pageforge <database> create-table <table> <name:type>...
 pageforge <database> create-index <index> <table> <integer-column>
+pageforge <database> verify-index <index>
 pageforge <database> insert <table> <value>...
 pageforge <database> query <select-or-explain-sql>
 pageforge <database> shell
@@ -30,6 +31,7 @@ pageforge contacts.db insert people 1 "Ada Lovelace" true NULL
 pageforge contacts.db insert people 2 "Grace Hopper" true compiler
 pageforge contacts.db query "EXPLAIN SELECT name FROM people WHERE id = 2"
 pageforge contacts.db create-index people_id_idx people id
+pageforge contacts.db verify-index people_id_idx
 pageforge contacts.db query "EXPLAIN SELECT name FROM people WHERE id = 2"
 pageforge contacts.db query \
   "SELECT name FROM people WHERE active = TRUE ORDER BY name ASC;"
@@ -66,6 +68,13 @@ equality or inclusive bound that the index fully covers is removed from that
 count. A strict range remains residual for its boundary recheck, while table
 scans leave every predicate residual. Non-integer, null-test, and `!=`
 predicates remain table scans.
+
+`verify-index` resolves the index name case-insensitively, traverses every
+reachable entry in key order, and validates that each referenced typed row
+belongs to the catalog-owned table and still contains the indexed key. It
+prints the verified row count. This is a focused index-to-row consistency
+check, not a heap-wide catalog audit, orphan detector, repair tool, or
+concurrent-operation guarantee.
 
 ## Interactive shell
 
