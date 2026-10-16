@@ -1442,6 +1442,11 @@ void sql_execution_rejects_binding_errors() {
               tables, catalog, "SELECT missing FROM people WHERE id = 1");
         },
         "all names should bind before an eager index lookup reads storage");
+    auto contradiction = pageforge::execute_select_sql(
+        tables, catalog, "SELECT id FROM people WHERE id >= 2 AND id <= 1");
+    check(contradiction.access_path() == pageforge::SelectAccessPath::IndexRange &&
+              !contradiction.next(),
+          "contradictory index bounds should return empty without reading a corrupt tree");
   }
   std::filesystem::remove(path);
 }
@@ -1598,8 +1603,9 @@ void sql_explain_reports_access_paths_without_running_rows() {
         catalog,
         pageforge::parse_select("SELECT name FROM items WHERE id >= 8 AND id <= 7"));
     check(contradictory.lower_bound == std::optional<std::int64_t>{8} &&
-              !contradictory.upper_bound && contradictory.residual_predicate_count == 1,
-          "EXPLAIN should leave an incompatible bound residual instead of creating an invalid range");
+              contradictory.upper_bound == std::optional<std::int64_t>{7} &&
+              contradictory.empty_range && contradictory.residual_predicate_count == 0,
+          "EXPLAIN should identify contradictory bounds as an empty access path");
 
     const auto equality_preferred = pageforge::explain_select(
         catalog, pageforge::parse_select("SELECT name FROM items WHERE id >= 1 AND id = 7"));

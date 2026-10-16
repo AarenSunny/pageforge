@@ -58,8 +58,9 @@ existing non-null integer keys, persists ownership in the catalog, and enables
 automatic maintenance for later writes. `EXPLAIN SELECT` reports the resolved
 table scan, exact-equality lookup, or compatible integer range without running
 the query operator pipeline. Conjunctive predicates on the selected index merge
-into lower and upper candidate bounds when they do not cross; strict
-comparisons recheck the boundary through the ordinary filter.
+into lower and upper candidate bounds. Crossing bounds report `empty=true` and
+execution returns no rows without opening the index; strict comparisons recheck
+their boundary through the ordinary filter.
 Its `residual_predicates` field makes post-access filtering explicit: the
 equality or inclusive bound that the index fully covers is removed from that
 count. A strict range remains residual for its boundary recheck, while table

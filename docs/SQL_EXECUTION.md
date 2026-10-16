@@ -41,13 +41,15 @@ auto explanation = pageforge::explain_select(catalog, plan);
 
 Exact equality is preferred over range access even when its predicate appears
 later. Otherwise, the first usable range predicate selects an index, and later
-compatible bounds for that same index are merged. A bound that would cross the
-current range remains residual, preserving correct empty-query behavior without
-passing invalid bounds to storage. Non-contiguous inequality, null-test, text,
-and boolean predicates retain a table scan. Every indexed candidate is
-validated to still exist, belong to the indexed table, and contain its recorded
-key; stale logical entries fail as table corruption rather than returning the
-wrong row.
+compatible bounds for that same index are merged. Crossing bounds produce a
+known-empty range: execution constructs an empty row source without opening the
+tree, while `EXPLAIN` retains both bounds and reports `empty=true`. This folding
+is limited to ordering predicates on the selected integer index; other logical
+contradictions still run through ordinary filters. Non-contiguous inequality,
+null-test, text, and boolean predicates retain a table scan. Every indexed
+candidate is validated to still exist, belong to the indexed table, and contain
+its recorded key; stale logical entries fail as table corruption rather than
+returning the wrong row.
 
 Unquoted table and column names are resolved case-insensitively while the
 catalog's original spelling is retained in output metadata. A case-insensitive
@@ -89,6 +91,6 @@ For an index access, `residual_predicates` excludes each compatible inclusive
 bound that the access path fully covers; all filters still run during execution
 as a safety check. Strict `<` and `>` ranges conservatively include the boundary
 key and remain residual so their filter can remove it, which avoids overflow at
-signed-integer extremes. Incompatible bounds also remain residual. A table scan
-marks every predicate as residual because its access path does not narrow
-candidate rows.
+signed-integer extremes. Predicates that prove a selected-index range empty are
+fully covered by that short-circuit. A table scan marks every predicate as
+residual because its access path does not narrow candidate rows.

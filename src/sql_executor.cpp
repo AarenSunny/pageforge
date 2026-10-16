@@ -137,6 +137,8 @@ struct IndexAccess {
   std::optional<std::int64_t> lower;
   std::optional<std::int64_t> upper;
   std::size_t covered_predicates;
+  std::size_t selected_predicates;
+  bool empty;
 };
 
 std::optional<IndexAccess> choose_index(Catalog& catalog, const TableDefinition& table,
@@ -161,7 +163,8 @@ std::optional<IndexAccess> choose_index(Catalog& catalog, const TableDefinition&
     if (predicate.comparison != SqlComparison::Equal) continue;
     if (auto index = matching_index(predicate)) {
       return IndexAccess{SelectAccessPath::IndexLookup, std::move(*index),
-                         std::get<std::int64_t>(predicate.literal), std::nullopt, std::nullopt, 1};
+                         std::get<std::int64_t>(predicate.literal), std::nullopt, std::nullopt, 1, 1,
+                         false};
     }
   }
 
@@ -181,18 +184,27 @@ std::optional<IndexAccess> choose_index(Catalog& catalog, const TableDefinition&
         range = IndexAccess{SelectAccessPath::IndexRange, std::move(*index), std::nullopt,
                             has_lower ? std::optional<std::int64_t>{key} : std::nullopt,
                             has_lower ? std::nullopt : std::optional<std::int64_t>{key},
-                            static_cast<std::size_t>(inclusive)};
+                            static_cast<std::size_t>(inclusive), 1, false};
         continue;
       }
       if (range->name != *index) continue;
+      ++range->selected_predicates;
+      if (range->empty) {
+        range->covered_predicates = range->selected_predicates;
+        continue;
+      }
 
       auto lower = range->lower;
       auto upper = range->upper;
       if (has_lower && (!lower || key > *lower)) lower = key;
       if (!has_lower && (!upper || key < *upper)) upper = key;
-      if (lower && upper && *lower > *upper) continue;
       range->lower = lower;
       range->upper = upper;
+      if (lower && upper && *lower > *upper) {
+        range->empty = true;
+        range->covered_predicates = range->selected_predicates;
+        continue;
+      }
       range->covered_predicates += static_cast<std::size_t>(inclusive);
     }
   }
@@ -252,6 +264,9 @@ BoundSelect bind_select(TableStore& tables, Catalog& catalog, const SelectPlan& 
           tables.lookup_index(analyzed.access->name, *analyzed.access->key),
           analyzed.table.schema.size());
     }
+    if (analyzed.access->empty) {
+      return Query::from_rows({}, analyzed.table.schema.size());
+    }
     return Query::from_rows(
         tables.lookup_index_range(analyzed.access->name, analyzed.access->lower,
                                   analyzed.access->upper),
@@ -278,6 +293,7 @@ SelectExplanation explain_select(Catalog& catalog, const SelectPlan& plan) {
     explanation.lookup_key = analyzed.access->key;
     explanation.lower_bound = analyzed.access->lower;
     explanation.upper_bound = analyzed.access->upper;
+    explanation.empty_range = analyzed.access->empty;
   }
   explanation.predicate_count = plan.predicates.size();
   explanation.residual_predicate_count = plan.predicates.size() -

@@ -222,6 +222,7 @@ void print_explanation(const pageforge::SelectExplanation& explanation) {
     std::cout << " upper=";
     if (explanation.upper_bound) std::cout << *explanation.upper_bound;
     else std::cout << "none";
+    if (explanation.empty_range) std::cout << " empty=true";
   }
   std::cout << " predicates=" << explanation.predicate_count
             << " residual_predicates=" << explanation.residual_predicate_count

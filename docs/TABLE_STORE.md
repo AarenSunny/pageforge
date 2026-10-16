@@ -91,5 +91,6 @@ SQL planning uses the typed range API for compatible integer ordering
 predicates on one selected index and exposes the merged inclusive candidate
 bounds through `EXPLAIN`. Strict comparisons include the boundary key in the
 candidate range and remove it through the ordinary predicate filter, avoiding
-signed-integer overflow at minimum and maximum keys. Incompatible bounds stay
-as residual filters instead of producing an invalid storage range.
+signed-integer overflow at minimum and maximum keys. Crossing selected-index
+bounds short-circuit to an empty query before `lookup_index_range` opens the
+tree, so storage never receives an invalid range.
