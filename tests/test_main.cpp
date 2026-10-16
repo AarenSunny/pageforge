@@ -1551,10 +1551,11 @@ void sql_explain_reports_access_paths_without_running_rows() {
     RecordStore records(pool);
     Catalog catalog(records);
     (void)catalog.create_table({"Items", {{"id", pageforge::DataType::Integer, false},
+                                           {"score", pageforge::DataType::Integer, false},
                                            {"name", pageforge::DataType::Text, false}},
                                 1});
     TableStore tables(records, catalog);
-    (void)tables.insert("Items", {std::int64_t{7}, std::string("seven")});
+    (void)tables.insert("Items", {std::int64_t{7}, std::int64_t{10}, std::string("seven")});
     const auto plan = pageforge::parse_select(
         "SELECT name FROM items WHERE id = 7 ORDER BY name LIMIT 1");
 
@@ -1633,6 +1634,29 @@ void sql_explain_reports_access_paths_without_running_rows() {
     check(equality_preferred.access_path == pageforge::SelectAccessPath::IndexLookup &&
               equality_preferred.lookup_key == std::optional<std::int64_t>{7},
           "exact lookups should take priority over wider range predicates");
+
+    (void)tables.create_index("items_score_idx", "Items", "score");
+    auto selective_range = pageforge::execute_select_sql(
+        tables, catalog,
+        "SELECT name FROM items WHERE id >= 1 AND score >= 5 AND score <= 15");
+    const auto selective_row = selective_range.next();
+    check(selective_range.access_path() == pageforge::SelectAccessPath::IndexRange &&
+              selective_range.index_name() ==
+                  std::optional<std::string>{"items_score_idx"} &&
+              selective_row &&
+              selective_row->values == pageforge::Tuple{std::string("seven")} &&
+              !selective_range.next(),
+          "planner should prefer a two-sided range over the first usable index");
+    const auto selective_explain = pageforge::explain_select(
+        catalog,
+        pageforge::parse_select(
+            "SELECT name FROM items WHERE id >= 1 AND score >= 5 AND score <= 15"));
+    check(selective_explain.index_name ==
+                  std::optional<std::string>{"items_score_idx"} &&
+              selective_explain.lower_bound == std::optional<std::int64_t>{5} &&
+              selective_explain.upper_bound == std::optional<std::int64_t>{15} &&
+              selective_explain.residual_predicate_count == 1,
+          "EXPLAIN should expose the range candidate with the strongest bounds");
 
     auto execution = pageforge::execute_sql(
         tables, catalog, "EXPLAIN SELECT name FROM items WHERE id = 7");

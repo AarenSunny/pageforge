@@ -1,5 +1,6 @@
 #include "pageforge/sql_executor.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <limits>
 #include <string>
@@ -169,7 +170,7 @@ std::optional<IndexAccess> choose_index(Catalog& catalog, const TableDefinition&
     }
   }
 
-  std::optional<IndexAccess> range;
+  std::vector<IndexAccess> ranges;
   for (const auto& predicate : predicates) {
     if (predicate.comparison == SqlComparison::Equal ||
         predicate.comparison == SqlComparison::NotEqual) {
@@ -189,14 +190,16 @@ std::optional<IndexAccess> choose_index(Catalog& catalog, const TableDefinition&
       const auto bound = impossible || !strict
                              ? key
                              : predicate.comparison == SqlComparison::Greater ? key + 1 : key - 1;
-      if (!range) {
-        range = IndexAccess{SelectAccessPath::IndexRange, std::move(*index), std::nullopt,
-                            has_lower ? std::optional<std::int64_t>{bound} : std::nullopt,
-                            has_lower ? std::nullopt : std::optional<std::int64_t>{bound}, 1, 1,
-                            impossible};
+      auto range = std::find_if(ranges.begin(), ranges.end(), [&](const auto& candidate) {
+        return candidate.name == *index;
+      });
+      if (range == ranges.end()) {
+        ranges.push_back(
+            {SelectAccessPath::IndexRange, std::move(*index), std::nullopt,
+             has_lower ? std::optional<std::int64_t>{bound} : std::nullopt,
+             has_lower ? std::nullopt : std::optional<std::int64_t>{bound}, 1, 1, impossible});
         continue;
       }
-      if (range->name != *index) continue;
       ++range->selected_predicates;
       if (range->empty) {
         range->covered_predicates = range->selected_predicates;
@@ -222,7 +225,16 @@ std::optional<IndexAccess> choose_index(Catalog& catalog, const TableDefinition&
       ++range->covered_predicates;
     }
   }
-  return range;
+  if (ranges.empty()) return std::nullopt;
+  const auto bound_count = [](const IndexAccess& access) {
+    return static_cast<std::size_t>(access.lower.has_value()) +
+           static_cast<std::size_t>(access.upper.has_value());
+  };
+  return *std::max_element(ranges.begin(), ranges.end(), [&](const auto& left, const auto& right) {
+    if (left.empty != right.empty) return !left.empty;
+    if (bound_count(left) != bound_count(right)) return bound_count(left) < bound_count(right);
+    return left.selected_predicates < right.selected_predicates;
+  });
 }
 
 struct AnalyzedSelect {

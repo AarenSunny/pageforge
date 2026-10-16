@@ -40,11 +40,13 @@ auto explanation = pageforge::explain_select(catalog, plan);
 ```
 
 Exact equality is preferred over range access even when its predicate appears
-later. Otherwise, the first usable range predicate selects an index, and later
-compatible bounds for that same index are merged. Crossing bounds produce a
-known-empty range: execution constructs an empty row source without opening the
-tree, while `EXPLAIN` retains both bounds and reports `empty=true`. This folding
-is limited to ordering predicates on the selected integer index; other logical
+later. Otherwise, the planner merges compatible bounds for every candidate
+index. It prefers a known-empty range, then a two-sided range, then the candidate
+covering more predicates; this is a deterministic structural heuristic, not a
+cardinality or cost estimate. Crossing bounds produce a known-empty range:
+execution constructs an empty row source without opening the tree, while
+`EXPLAIN` retains both bounds and reports `empty=true`. This folding is limited
+to ordering predicates on the selected integer index; other logical
 contradictions still run through ordinary filters. Non-contiguous inequality,
 null-test, text, and boolean predicates retain a table scan. Every indexed
 candidate is validated to still exist, belong to the indexed table, and contain
