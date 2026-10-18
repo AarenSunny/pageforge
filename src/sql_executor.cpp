@@ -161,13 +161,35 @@ std::optional<IndexAccess> choose_index(Catalog& catalog, const TableDefinition&
     return std::nullopt;
   };
 
+  std::vector<IndexAccess> lookups;
   for (const auto& predicate : predicates) {
     if (predicate.comparison != SqlComparison::Equal) continue;
     if (auto index = matching_index(predicate)) {
-      return IndexAccess{SelectAccessPath::IndexLookup, std::move(*index),
-                         std::get<std::int64_t>(predicate.literal), std::nullopt, std::nullopt, 1, 1,
-                         false};
+      const auto existing = std::find_if(lookups.begin(), lookups.end(), [&](const auto& candidate) {
+        return candidate.name == *index;
+      });
+      if (existing == lookups.end()) {
+        lookups.push_back({SelectAccessPath::IndexLookup, std::move(*index),
+                           std::get<std::int64_t>(predicate.literal), std::nullopt, std::nullopt, 0,
+                           0, false});
+      }
     }
+  }
+  for (auto& lookup : lookups) {
+    for (const auto& predicate : predicates) {
+      const auto index = matching_index(predicate);
+      if (!index || *index != lookup.name) continue;
+      ++lookup.selected_predicates;
+      ++lookup.covered_predicates;
+      const auto literal = std::get<std::int64_t>(predicate.literal);
+      if (!compare(*lookup.key, literal, predicate.comparison)) lookup.empty = true;
+    }
+  }
+  if (!lookups.empty()) {
+    return *std::max_element(lookups.begin(), lookups.end(), [&](const auto& left, const auto& right) {
+      if (left.empty != right.empty) return !left.empty;
+      return left.selected_predicates < right.selected_predicates;
+    });
   }
 
   std::vector<IndexAccess> ranges;
@@ -285,13 +307,13 @@ BoundSelect bind_select(TableStore& tables, Catalog& catalog, const SelectPlan& 
   auto analyzed = analyze_select(catalog, plan);
   auto make_query = [&]() {
     if (!analyzed.access) return Query::from(tables, analyzed.table.name);
+    if (analyzed.access->empty) {
+      return Query::from_rows({}, analyzed.table.schema.size());
+    }
     if (analyzed.access->path == SelectAccessPath::IndexLookup) {
       return Query::from_rows(
           tables.lookup_index(analyzed.access->name, *analyzed.access->key),
           analyzed.table.schema.size());
-    }
-    if (analyzed.access->empty) {
-      return Query::from_rows({}, analyzed.table.schema.size());
     }
     return Query::from_rows(
         tables.lookup_index_range(analyzed.access->name, analyzed.access->lower,
@@ -319,7 +341,7 @@ SelectExplanation explain_select(Catalog& catalog, const SelectPlan& plan) {
     explanation.lookup_key = analyzed.access->key;
     explanation.lower_bound = analyzed.access->lower;
     explanation.upper_bound = analyzed.access->upper;
-    explanation.empty_range = analyzed.access->empty;
+    explanation.empty_result = analyzed.access->empty;
   }
   explanation.predicate_count = plan.predicates.size();
   explanation.residual_predicate_count = plan.predicates.size() -

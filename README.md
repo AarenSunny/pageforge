@@ -32,7 +32,7 @@ compaction, a durable heap file, a buffer manager, and typed catalog metadata.
 - Strict `SELECT` parser with conjunctive predicates and explicit null tests
 - Catalog-bound SQL execution with typed filters and `ORDER BY`
 - Index-aware SQL planning for integer equality and compatible conjunctive ranges
-- Storage-free short-circuiting for contradictory selected-index bounds
+- Storage-free short-circuiting for contradictory selected-index constraints
 - Non-executing `EXPLAIN SELECT` output for access paths and residual filters
 - CLI for typed writes, SQL queries, and an introspective interactive shell
 - Multi-stage, non-root Docker image with cross-container persistence tests

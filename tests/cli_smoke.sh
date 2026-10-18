@@ -86,6 +86,8 @@ special=$(printf 'Tab\tName\\Path')
   "INDEX_RANGE table=People index=people_id_idx lower=2 upper=none predicates=1 residual_predicates=0 sort=true limit=3" ]
 [ "$("$cli" "$database" query "EXPLAIN SELECT name FROM people WHERE id >= 3 AND id <= 2")" = \
   "INDEX_RANGE table=People index=people_id_idx lower=3 upper=2 empty=true predicates=2 residual_predicates=0 sort=false limit=none" ]
+[ "$("$cli" "$database" query "EXPLAIN SELECT name FROM people WHERE id = 2 AND id < 2")" = \
+  "INDEX_LOOKUP table=People index=people_id_idx key=2 empty=true predicates=2 residual_predicates=0 sort=false limit=none" ]
 [ "$("$cli" "$database" query "EXPLAIN SELECT name FROM people WHERE id = 2 AND active = FALSE")" = \
   "INDEX_LOOKUP table=People index=people_id_idx key=2 predicates=2 residual_predicates=1 sort=false limit=none" ]
 [ "$("$cli" "$database" query "SELECT name FROM people WHERE id = 2")" = \

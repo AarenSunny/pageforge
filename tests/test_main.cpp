@@ -1610,7 +1610,7 @@ void sql_explain_reports_access_paths_without_running_rows() {
         pageforge::parse_select("SELECT name FROM items WHERE id > 9223372036854775807"));
     check(above_max.lower_bound ==
                   std::optional<std::int64_t>{std::numeric_limits<std::int64_t>::max()} &&
-              above_max.empty_range && above_max.residual_predicate_count == 0,
+              above_max.empty_result && above_max.residual_predicate_count == 0,
           "EXPLAIN should make a greater-than-maximum bound empty without overflowing");
 
     const auto below_min = pageforge::explain_select(
@@ -1618,7 +1618,7 @@ void sql_explain_reports_access_paths_without_running_rows() {
         pageforge::parse_select("SELECT name FROM items WHERE id < -9223372036854775808"));
     check(below_min.upper_bound ==
                   std::optional<std::int64_t>{std::numeric_limits<std::int64_t>::min()} &&
-              below_min.empty_range && below_min.residual_predicate_count == 0,
+              below_min.empty_result && below_min.residual_predicate_count == 0,
           "EXPLAIN should make a less-than-minimum bound empty without overflowing");
 
     const auto contradictory = pageforge::explain_select(
@@ -1626,7 +1626,7 @@ void sql_explain_reports_access_paths_without_running_rows() {
         pageforge::parse_select("SELECT name FROM items WHERE id >= 8 AND id <= 7"));
     check(contradictory.lower_bound == std::optional<std::int64_t>{8} &&
               contradictory.upper_bound == std::optional<std::int64_t>{7} &&
-              contradictory.empty_range && contradictory.residual_predicate_count == 0,
+              contradictory.empty_result && contradictory.residual_predicate_count == 0,
           "EXPLAIN should identify contradictory bounds as an empty access path");
 
     const auto equality_preferred = pageforge::explain_select(
@@ -1658,6 +1658,24 @@ void sql_explain_reports_access_paths_without_running_rows() {
               selective_explain.residual_predicate_count == 1,
           "EXPLAIN should expose the range candidate with the strongest bounds");
 
+    const auto singleton = pageforge::explain_select(
+        catalog,
+        pageforge::parse_select(
+            "SELECT name FROM items WHERE id = 7 AND id >= 7 AND id != 8"));
+    check(singleton.access_path == pageforge::SelectAccessPath::IndexLookup &&
+              singleton.lookup_key == std::optional<std::int64_t>{7} &&
+              !singleton.empty_result && singleton.predicate_count == 3 &&
+              singleton.residual_predicate_count == 0,
+          "an exact lookup should cover compatible constraints on its singleton key");
+
+    const auto impossible = pageforge::explain_select(
+        catalog,
+        pageforge::parse_select("SELECT name FROM items WHERE id = 7 AND id < 7"));
+    check(impossible.access_path == pageforge::SelectAccessPath::IndexLookup &&
+              impossible.lookup_key == std::optional<std::int64_t>{7} &&
+              impossible.empty_result && impossible.residual_predicate_count == 0,
+          "EXPLAIN should identify contradictory constraints around an exact lookup");
+
     auto execution = pageforge::execute_sql(
         tables, catalog, "EXPLAIN SELECT name FROM items WHERE id = 7");
     check(std::holds_alternative<pageforge::SelectExplanation>(execution) &&
@@ -1672,6 +1690,14 @@ void sql_explain_reports_access_paths_without_running_rows() {
     const auto row = rows.next();
     check(row && row->values == pageforge::Tuple{std::string("seven")} && !rows.next(),
           "EXPLAIN support should not change SELECT results");
+
+    const auto id_index = catalog.find_index("items_id_idx");
+    check(id_index.has_value(), "test index should remain registered");
+    records.replace(id_index->header_id, bytes("unreadable index header"));
+    auto empty = pageforge::execute_select_sql(
+        tables, catalog, "SELECT name FROM items WHERE id = 7 AND id = 8");
+    check(empty.access_path() == pageforge::SelectAccessPath::IndexLookup && !empty.next(),
+          "known-empty exact constraints should avoid opening the index");
   }
   std::filesystem::remove(path);
 }

@@ -40,18 +40,21 @@ auto explanation = pageforge::explain_select(catalog, plan);
 ```
 
 Exact equality is preferred over range access even when its predicate appears
-later. Otherwise, the planner merges compatible bounds for every candidate
+later. An equality lookup also evaluates every integer constraint on the same
+indexed column against its singleton key. Compatible constraints need no
+residual filter; a contradiction produces a known-empty lookup without opening
+the tree. Otherwise, the planner merges compatible bounds for every candidate
 index. It prefers a known-empty range, then a two-sided range, then the candidate
 covering more predicates; this is a deterministic structural heuristic, not a
 cardinality or cost estimate. Crossing bounds produce a known-empty range:
 execution constructs an empty row source without opening the tree, while
-`EXPLAIN` retains both bounds and reports `empty=true`. This folding is limited
-to ordering predicates on the selected integer index; other logical
-contradictions still run through ordinary filters. Non-contiguous inequality,
-null-test, text, and boolean predicates retain a table scan. Every indexed
-candidate is validated to still exist, belong to the indexed table, and contain
-its recorded key; stale logical entries fail as table corruption rather than
-returning the wrong row.
+`EXPLAIN` retains the lookup key or range bounds and reports `empty=true`. This
+folding is limited to comparisons on the selected integer index; other logical
+contradictions still run through ordinary filters. Null-test, text, and boolean
+predicates retain a table scan, while `!=` can only be folded alongside an exact
+lookup. Every indexed candidate is validated to still exist, belong to the
+indexed table, and contain its recorded key; stale logical entries fail as table
+corruption rather than returning the wrong row.
 
 Unquoted table and column names are resolved case-insensitively while the
 catalog's original spelling is retained in output metadata. A case-insensitive
