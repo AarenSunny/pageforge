@@ -36,7 +36,7 @@ if (result.access_path() == pageforge::SelectAccessPath::IndexLookup) {
 auto explanation = pageforge::explain_select(catalog, plan);
 // explanation contains TABLE_SCAN, INDEX_LOOKUP, or INDEX_RANGE; the resolved
 // table; optional index, key, or inclusive candidate bounds; total and residual
-// predicate counts; the sort requirement; and the limit.
+// predicate counts; whether execution adds a blocking sort; and the limit.
 ```
 
 Exact equality is preferred over range access even when its predicate appears
@@ -72,11 +72,14 @@ null tests for columns of any type. The output exposes its projected `Schema`,
 including a wildcard query that returns the entire table schema even when
 `LIMIT 0` yields no rows.
 
-`ORDER BY` resolves against the source schema, so a query may sort on a column
-that it does not project. The sort happens after filtering and before projection
-and limit. It compares integers numerically, text by `std::string` byte order,
-and booleans with `false` before `true`; nulls sort last in both directions.
-Sorting is stable but blocking and currently keeps every filtered row in memory.
+`ORDER BY` resolves against the source schema, so a query may order on a column
+that it does not project. An ascending order on the selected range-index column
+uses the B+ tree's existing key order instead of adding a blocking sort. An exact
+lookup may use that order in either direction because every candidate has the
+same key. Other orders sort after filtering and before projection and limit.
+They compare integers numerically, text by `std::string` byte order, and booleans
+with `false` before `true`; nulls sort last in both directions. The fallback sort
+is stable but blocking and currently keeps every filtered row in memory.
 
 `execute_sql` dispatches ordinary `SELECT` statements to `BoundSelect` and
 `EXPLAIN SELECT` statements to `SelectExplanation`. Explanation still performs

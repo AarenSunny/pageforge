@@ -135,6 +135,7 @@ RowLess bind_order(const Schema& schema, const SqlOrder& order) {
 struct IndexAccess {
   SelectAccessPath path;
   std::string name;
+  std::string column;
   std::optional<std::int64_t> key;
   std::optional<std::int64_t> lower;
   std::optional<std::int64_t> upper;
@@ -146,7 +147,7 @@ struct IndexAccess {
 std::optional<IndexAccess> choose_index(Catalog& catalog, const TableDefinition& table,
                                         const std::vector<SqlPredicate>& predicates) {
   const auto indexes = catalog.list_indexes();
-  const auto matching_index = [&](const SqlPredicate& predicate) -> std::optional<std::string> {
+  const auto matching_index = [&](const SqlPredicate& predicate) -> std::optional<IndexDefinition> {
     if (predicate.kind != SqlPredicateKind::Comparison ||
         !std::holds_alternative<std::int64_t>(predicate.literal)) {
       return std::nullopt;
@@ -155,7 +156,7 @@ std::optional<IndexAccess> choose_index(Catalog& catalog, const TableDefinition&
     if (table.schema[column_index].type != DataType::Integer) return std::nullopt;
     for (const auto& index : indexes) {
       if (index.table == table.name && index.column == table.schema[column_index].name) {
-        return index.name;
+        return index;
       }
     }
     return std::nullopt;
@@ -166,10 +167,11 @@ std::optional<IndexAccess> choose_index(Catalog& catalog, const TableDefinition&
     if (predicate.comparison != SqlComparison::Equal) continue;
     if (auto index = matching_index(predicate)) {
       const auto existing = std::find_if(lookups.begin(), lookups.end(), [&](const auto& candidate) {
-        return candidate.name == *index;
+        return candidate.name == index->name;
       });
       if (existing == lookups.end()) {
-        lookups.push_back({SelectAccessPath::IndexLookup, std::move(*index),
+        lookups.push_back({SelectAccessPath::IndexLookup, std::move(index->name),
+                           std::move(index->column),
                            std::get<std::int64_t>(predicate.literal), std::nullopt, std::nullopt, 0,
                            0, false});
       }
@@ -178,7 +180,7 @@ std::optional<IndexAccess> choose_index(Catalog& catalog, const TableDefinition&
   for (auto& lookup : lookups) {
     for (const auto& predicate : predicates) {
       const auto index = matching_index(predicate);
-      if (!index || *index != lookup.name) continue;
+      if (!index || index->name != lookup.name) continue;
       ++lookup.selected_predicates;
       ++lookup.covered_predicates;
       const auto literal = std::get<std::int64_t>(predicate.literal);
@@ -213,11 +215,12 @@ std::optional<IndexAccess> choose_index(Catalog& catalog, const TableDefinition&
                              ? key
                              : predicate.comparison == SqlComparison::Greater ? key + 1 : key - 1;
       auto range = std::find_if(ranges.begin(), ranges.end(), [&](const auto& candidate) {
-        return candidate.name == *index;
+        return candidate.name == index->name;
       });
       if (range == ranges.end()) {
         ranges.push_back(
-            {SelectAccessPath::IndexRange, std::move(*index), std::nullopt,
+            {SelectAccessPath::IndexRange, std::move(index->name), std::move(index->column),
+             std::nullopt,
              has_lower ? std::optional<std::int64_t>{bound} : std::nullopt,
              has_lower ? std::nullopt : std::optional<std::int64_t>{bound}, 1, 1, impossible});
         continue;
@@ -266,6 +269,7 @@ struct AnalyzedSelect {
   Schema output_schema;
   std::optional<std::vector<std::size_t>> projection;
   std::optional<IndexAccess> access;
+  bool sorts_rows;
 };
 
 AnalyzedSelect analyze_select(Catalog& catalog, const SelectPlan& plan) {
@@ -297,8 +301,16 @@ AnalyzedSelect analyze_select(Catalog& catalog, const SelectPlan& plan) {
   }
 
   auto access = choose_index(catalog, table, plan.predicates);
+  bool sorts_rows = plan.order.has_value();
+  if (plan.order && access &&
+      (access->empty ||
+       (equal_name(access->column, plan.order->column) &&
+        (access->path == SelectAccessPath::IndexLookup || !plan.order->descending)))) {
+    order.reset();
+    sorts_rows = false;
+  }
   return {std::move(table), std::move(predicates), std::move(order), std::move(output_schema),
-          std::move(projection), std::move(access)};
+          std::move(projection), std::move(access), sorts_rows};
 }
 
 }  // namespace
@@ -346,7 +358,7 @@ SelectExplanation explain_select(Catalog& catalog, const SelectPlan& plan) {
   explanation.predicate_count = plan.predicates.size();
   explanation.residual_predicate_count = plan.predicates.size() -
                                          (analyzed.access ? analyzed.access->covered_predicates : 0);
-  explanation.sorts_rows = plan.order.has_value();
+  explanation.sorts_rows = analyzed.sorts_rows;
   explanation.limit = plan.limit;
   return explanation;
 }

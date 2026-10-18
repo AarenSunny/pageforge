@@ -1556,6 +1556,8 @@ void sql_explain_reports_access_paths_without_running_rows() {
                                 1});
     TableStore tables(records, catalog);
     (void)tables.insert("Items", {std::int64_t{7}, std::int64_t{10}, std::string("seven")});
+    (void)tables.insert("Items", {std::int64_t{9}, std::int64_t{30}, std::string("nine")});
+    (void)tables.insert("Items", {std::int64_t{8}, std::int64_t{2}, std::string("eight")});
     const auto plan = pageforge::parse_select(
         "SELECT name FROM items WHERE id = 7 ORDER BY name LIMIT 1");
 
@@ -1667,6 +1669,34 @@ void sql_explain_reports_access_paths_without_running_rows() {
               !singleton.empty_result && singleton.predicate_count == 3 &&
               singleton.residual_predicate_count == 0,
           "an exact lookup should cover compatible constraints on its singleton key");
+
+    auto ordered_range = pageforge::execute_select_sql(
+        tables, catalog, "SELECT id FROM items WHERE id >= 7 ORDER BY id");
+    std::vector<std::int64_t> ordered_ids;
+    while (auto ordered_row = ordered_range.next()) {
+      ordered_ids.push_back(std::get<std::int64_t>(ordered_row->values[0]));
+    }
+    check(ordered_ids == std::vector<std::int64_t>{7, 8, 9},
+          "ascending index order should satisfy ORDER BY without changing results");
+    const auto ordered_explain = pageforge::explain_select(
+        catalog, pageforge::parse_select("SELECT id FROM items WHERE id >= 7 ORDER BY ID"));
+    check(ordered_explain.access_path == pageforge::SelectAccessPath::IndexRange &&
+              !ordered_explain.sorts_rows,
+          "EXPLAIN should report when ascending index order elides the blocking sort");
+
+    auto descending_range = pageforge::execute_select_sql(
+        tables, catalog, "SELECT id FROM items WHERE id >= 7 ORDER BY id DESC");
+    std::vector<std::int64_t> descending_ids;
+    while (auto descending_row = descending_range.next()) {
+      descending_ids.push_back(std::get<std::int64_t>(descending_row->values[0]));
+    }
+    check(descending_ids == std::vector<std::int64_t>{9, 8, 7} &&
+              pageforge::explain_select(
+                  catalog,
+                  pageforge::parse_select(
+                      "SELECT id FROM items WHERE id >= 7 ORDER BY id DESC"))
+                  .sorts_rows,
+          "descending range order should retain the explicit sort");
 
     const auto impossible = pageforge::explain_select(
         catalog,
