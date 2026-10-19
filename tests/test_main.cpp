@@ -920,6 +920,11 @@ void typed_tables_read_validated_index_ranges() {
           "typed index ranges should support an unbounded lower endpoint");
     const auto all = tables.lookup_index_range("items_score_idx", std::nullopt, std::nullopt);
     check(all.size() == 4, "unbounded typed index ranges should omit nullable keys");
+    const auto descending =
+        tables.lookup_index_range("items_score_idx", std::nullopt, std::nullopt, true);
+    check(descending.size() == 4 && descending[0].id == high && descending[1].id == first &&
+              descending[2].id == second && descending[3].id == low,
+          "descending typed ranges should reverse keys while retaining duplicate-key order");
     check_throws<std::invalid_argument>(
         [&] { (void)tables.lookup_index_range("items_score_idx", 9, 7); },
         "typed index ranges should reject reversed endpoints");
@@ -1712,12 +1717,12 @@ void sql_explain_reports_access_paths_without_running_rows() {
       descending_ids.push_back(std::get<std::int64_t>(descending_row->values[0]));
     }
     check(descending_ids == std::vector<std::int64_t>{9, 8, 7} &&
-              pageforge::explain_select(
-                  catalog,
-                  pageforge::parse_select(
-                      "SELECT id FROM items WHERE id >= 7 ORDER BY id DESC"))
-                  .sorts_rows,
-          "descending range order should retain the explicit sort");
+              !pageforge::explain_select(
+                   catalog,
+                   pageforge::parse_select(
+                       "SELECT id FROM items WHERE id >= 7 ORDER BY id DESC"))
+                   .sorts_rows,
+          "descending index order should satisfy ORDER BY without a blocking sort");
 
     const auto impossible = pageforge::explain_select(
         catalog,

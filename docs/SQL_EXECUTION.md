@@ -45,8 +45,8 @@ indexed column against its singleton key. Compatible constraints need no
 residual filter; a contradiction produces a known-empty lookup without opening
 the tree. Otherwise, the planner merges compatible bounds for every candidate
 index. It prefers a known-empty range, then a two-sided range, then the candidate
-covering more predicates. A tie prefers an index that also provides a requested
-ascending order, avoiding a blocking sort without discarding a structurally
+covering more predicates. A tie prefers an index that also provides the
+requested order, avoiding a blocking sort without discarding a structurally
 stronger range. This is a deterministic structural heuristic, not a cardinality
 or cost estimate. Crossing bounds produce a known-empty range:
 execution constructs an empty row source without opening the tree, while
@@ -75,10 +75,12 @@ including a wildcard query that returns the entire table schema even when
 `LIMIT 0` yields no rows.
 
 `ORDER BY` resolves against the source schema, so a query may order on a column
-that it does not project. An ascending order on the selected range-index column
-uses the B+ tree's existing key order instead of adding a blocking sort. An exact
-lookup may use that order in either direction because every candidate has the
-same key. Other orders sort after filtering and before projection and limit.
+that it does not project. Either direction on the selected range-index column
+uses the B+ tree's key order instead of adding a blocking sort. Descending reads
+reverse the materialized key groups while preserving record order within equal
+keys; the leaf format does not yet store reverse sibling links. An exact lookup
+may use index order in either direction because every candidate has the same
+key. Other orders sort after filtering and before projection and limit.
 They compare integers numerically, text by `std::string` byte order, and booleans
 with `false` before `true`; nulls sort last in both directions. The fallback sort
 is stable but blocking and currently keeps every filtered row in memory.

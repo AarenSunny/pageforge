@@ -51,7 +51,7 @@ class TableStore {
   [[nodiscard]] std::vector<TableRow> lookup_index(std::string_view index_name, std::int64_t key);
   [[nodiscard]] std::vector<TableRow> lookup_index_range(
       std::string_view index_name, std::optional<std::int64_t> lower,
-      std::optional<std::int64_t> upper);
+      std::optional<std::int64_t> upper, bool descending = false);
   bool erase(std::string_view table_name, RecordId id);
 
  private:

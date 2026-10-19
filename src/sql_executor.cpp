@@ -263,7 +263,7 @@ std::optional<IndexAccess> choose_index(Catalog& catalog, const TableDefinition&
            static_cast<std::size_t>(access.upper.has_value());
   };
   const auto reuses_order = [&](const IndexAccess& access) {
-    return order && !order->descending && equal_name(access.column, order->column);
+    return order && equal_name(access.column, order->column);
   };
   return *std::max_element(ranges.begin(), ranges.end(), [&](const auto& left, const auto& right) {
     if (left.empty != right.empty) return !left.empty;
@@ -283,6 +283,7 @@ struct AnalyzedSelect {
   std::optional<std::vector<std::size_t>> projection;
   std::optional<IndexAccess> access;
   bool sorts_rows;
+  bool reverses_index_order;
 };
 
 AnalyzedSelect analyze_select(Catalog& catalog, const SelectPlan& plan) {
@@ -315,15 +316,20 @@ AnalyzedSelect analyze_select(Catalog& catalog, const SelectPlan& plan) {
 
   auto access = choose_index(catalog, table, plan.predicates, plan.order);
   bool sorts_rows = plan.order.has_value();
+  const bool matching_index_order =
+      plan.order && access && equal_name(access->column, plan.order->column) &&
+      (access->path == SelectAccessPath::IndexLookup ||
+       access->path == SelectAccessPath::IndexRange);
+  const bool reverses_index_order =
+      matching_index_order && plan.order->descending &&
+      access->path == SelectAccessPath::IndexRange && !access->empty;
   if (plan.order && access &&
-      (access->empty ||
-       (equal_name(access->column, plan.order->column) &&
-        (access->path == SelectAccessPath::IndexLookup || !plan.order->descending)))) {
+      (access->empty || matching_index_order)) {
     order.reset();
     sorts_rows = false;
   }
   return {std::move(table), std::move(predicates), std::move(order), std::move(output_schema),
-          std::move(projection), std::move(access), sorts_rows};
+          std::move(projection), std::move(access), sorts_rows, reverses_index_order};
 }
 
 }  // namespace
@@ -342,7 +348,7 @@ BoundSelect bind_select(TableStore& tables, Catalog& catalog, const SelectPlan& 
     }
     return Query::from_rows(
         tables.lookup_index_range(analyzed.access->name, analyzed.access->lower,
-                                  analyzed.access->upper),
+                                  analyzed.access->upper, analyzed.reverses_index_order),
         analyzed.table.schema.size());
   };
   auto query = make_query();
