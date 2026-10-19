@@ -45,8 +45,10 @@ indexed column against its singleton key. Compatible constraints need no
 residual filter; a contradiction produces a known-empty lookup without opening
 the tree. Otherwise, the planner merges compatible bounds for every candidate
 index. It prefers a known-empty range, then a two-sided range, then the candidate
-covering more predicates; this is a deterministic structural heuristic, not a
-cardinality or cost estimate. Crossing bounds produce a known-empty range:
+covering more predicates. A tie prefers an index that also provides a requested
+ascending order, avoiding a blocking sort without discarding a structurally
+stronger range. This is a deterministic structural heuristic, not a cardinality
+or cost estimate. Crossing bounds produce a known-empty range:
 execution constructs an empty row source without opening the tree, while
 `EXPLAIN` retains the lookup key or range bounds and reports `empty=true`. This
 folding is limited to comparisons on the selected integer index; other logical

@@ -145,7 +145,8 @@ struct IndexAccess {
 };
 
 std::optional<IndexAccess> choose_index(Catalog& catalog, const TableDefinition& table,
-                                        const std::vector<SqlPredicate>& predicates) {
+                                        const std::vector<SqlPredicate>& predicates,
+                                        const std::optional<SqlOrder>& order) {
   const auto indexes = catalog.list_indexes();
   const auto matching_index = [&](const SqlPredicate& predicate) -> std::optional<IndexDefinition> {
     if (predicate.kind != SqlPredicateKind::Comparison ||
@@ -188,9 +189,15 @@ std::optional<IndexAccess> choose_index(Catalog& catalog, const TableDefinition&
     }
   }
   if (!lookups.empty()) {
+    const auto reuses_order = [&](const IndexAccess& access) {
+      return order && equal_name(access.column, order->column);
+    };
     return *std::max_element(lookups.begin(), lookups.end(), [&](const auto& left, const auto& right) {
       if (left.empty != right.empty) return !left.empty;
-      return left.selected_predicates < right.selected_predicates;
+      if (left.selected_predicates != right.selected_predicates) {
+        return left.selected_predicates < right.selected_predicates;
+      }
+      return reuses_order(left) < reuses_order(right);
     });
   }
 
@@ -255,10 +262,16 @@ std::optional<IndexAccess> choose_index(Catalog& catalog, const TableDefinition&
     return static_cast<std::size_t>(access.lower.has_value()) +
            static_cast<std::size_t>(access.upper.has_value());
   };
+  const auto reuses_order = [&](const IndexAccess& access) {
+    return order && !order->descending && equal_name(access.column, order->column);
+  };
   return *std::max_element(ranges.begin(), ranges.end(), [&](const auto& left, const auto& right) {
     if (left.empty != right.empty) return !left.empty;
     if (bound_count(left) != bound_count(right)) return bound_count(left) < bound_count(right);
-    return left.selected_predicates < right.selected_predicates;
+    if (left.selected_predicates != right.selected_predicates) {
+      return left.selected_predicates < right.selected_predicates;
+    }
+    return reuses_order(left) < reuses_order(right);
   });
 }
 
@@ -300,7 +313,7 @@ AnalyzedSelect analyze_select(Catalog& catalog, const SelectPlan& plan) {
     }
   }
 
-  auto access = choose_index(catalog, table, plan.predicates);
+  auto access = choose_index(catalog, table, plan.predicates, plan.order);
   bool sorts_rows = plan.order.has_value();
   if (plan.order && access &&
       (access->empty ||

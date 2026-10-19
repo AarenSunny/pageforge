@@ -1660,6 +1660,27 @@ void sql_explain_reports_access_paths_without_running_rows() {
               selective_explain.residual_predicate_count == 1,
           "EXPLAIN should expose the range candidate with the strongest bounds");
 
+    auto order_aware_range = pageforge::execute_select_sql(
+        tables, catalog,
+        "SELECT name FROM items WHERE id >= 7 AND score >= 2 ORDER BY score");
+    std::vector<std::string> score_ordered_names;
+    while (auto score_row = order_aware_range.next()) {
+      score_ordered_names.push_back(std::get<std::string>(score_row->values[0]));
+    }
+    check(score_ordered_names == std::vector<std::string>{"eight", "seven", "nine"} &&
+              order_aware_range.index_name() ==
+                  std::optional<std::string>{"items_score_idx"},
+          "equally constrained ranges should prefer the index that provides requested order");
+    const auto order_aware_explain = pageforge::explain_select(
+        catalog,
+        pageforge::parse_select(
+            "SELECT name FROM items WHERE id >= 7 AND score >= 2 ORDER BY SCORE"));
+    check(order_aware_explain.index_name ==
+                  std::optional<std::string>{"items_score_idx"} &&
+              order_aware_explain.residual_predicate_count == 1 &&
+              !order_aware_explain.sorts_rows,
+          "EXPLAIN should expose order-aware tie-breaking without overstating predicate coverage");
+
     const auto singleton = pageforge::explain_select(
         catalog,
         pageforge::parse_select(
