@@ -337,6 +337,9 @@ AnalyzedSelect analyze_select(Catalog& catalog, const SelectPlan& plan) {
 BoundSelect bind_select(TableStore& tables, Catalog& catalog, const SelectPlan& plan) {
   auto analyzed = analyze_select(catalog, plan);
   auto make_query = [&]() {
+    if (plan.limit && *plan.limit == 0) {
+      return Query::from_rows({}, analyzed.table.schema.size());
+    }
     if (!analyzed.access) return Query::from(tables, analyzed.table.name);
     if (analyzed.access->empty) {
       return Query::from_rows({}, analyzed.table.schema.size());

@@ -1447,6 +1447,13 @@ void sql_execution_rejects_binding_errors() {
               tables, catalog, "SELECT missing FROM people WHERE id = 1");
         },
         "all names should bind before an eager index lookup reads storage");
+    auto indexed_zero = pageforge::execute_select_sql(
+        tables, catalog, "SELECT id FROM people WHERE id = 1 LIMIT 0");
+    check(indexed_zero.access_path() == pageforge::SelectAccessPath::IndexLookup &&
+              indexed_zero.output_schema() ==
+                  pageforge::Schema{{"id", pageforge::DataType::Integer, false}} &&
+              !indexed_zero.next(),
+          "LIMIT zero should preserve the chosen plan and schema without opening its index");
     auto contradiction = pageforge::execute_select_sql(
         tables, catalog, "SELECT id FROM people WHERE id >= 2 AND id <= 1");
     check(contradiction.access_path() == pageforge::SelectAccessPath::IndexRange &&

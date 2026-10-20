@@ -73,7 +73,9 @@ the result is unknown and the row is removed by `WHERE`; consequently
 `column = NULL` matches no rows. `IS NULL` and `IS NOT NULL` provide explicit
 null tests for columns of any type. The output exposes its projected `Schema`,
 including a wildcard query that returns the entire table schema even when
-`LIMIT 0` yields no rows.
+`LIMIT 0` yields no rows. A zero limit completes binding and retains the chosen
+access-path metadata, but it does not open the table cursor or index because no
+row can reach the output.
 
 `ORDER BY` resolves against the source schema, so a query may order on a column
 that it does not project. Either direction on the selected range-index column
