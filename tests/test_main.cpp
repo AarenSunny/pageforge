@@ -1568,7 +1568,8 @@ void sql_explain_reports_access_paths_without_running_rows() {
 
     const auto scan = pageforge::explain_select(catalog, plan);
     check(scan.table == "Items" && scan.access_path == pageforge::SelectAccessPath::TableScan &&
-              !scan.index_name && !scan.lookup_key && scan.predicate_count == 1 &&
+              !scan.index_name && !scan.lookup_key && !scan.index_scan_direction &&
+              scan.predicate_count == 1 &&
               scan.residual_predicate_count == 1 && scan.sorts_rows && scan.limit == 1,
           "EXPLAIN should report validated table-scan planning metadata");
 
@@ -1577,6 +1578,7 @@ void sql_explain_reports_access_paths_without_running_rows() {
     check(indexed.access_path == pageforge::SelectAccessPath::IndexLookup &&
               indexed.index_name == std::optional<std::string>{"items_id_idx"} &&
               indexed.lookup_key == std::optional<std::int64_t>{7} &&
+              !indexed.index_scan_direction &&
               indexed.predicate_count == 1 && indexed.residual_predicate_count == 0,
           "EXPLAIN should identify the chosen equality index and lookup key");
 
@@ -1592,7 +1594,9 @@ void sql_explain_reports_access_paths_without_running_rows() {
     check(range.access_path == pageforge::SelectAccessPath::IndexRange &&
               range.index_name == std::optional<std::string>{"items_id_idx"} &&
               range.lower_bound == std::optional<std::int64_t>{7} && !range.upper_bound &&
-              !range.lookup_key && range.predicate_count == 1 &&
+              !range.lookup_key &&
+              range.index_scan_direction == pageforge::IndexScanDirection::Forward &&
+              range.predicate_count == 1 &&
               range.residual_predicate_count == 0,
           "EXPLAIN should report inclusive index-range candidate bounds");
 
@@ -1633,7 +1637,8 @@ void sql_explain_reports_access_paths_without_running_rows() {
         pageforge::parse_select("SELECT name FROM items WHERE id >= 8 AND id <= 7"));
     check(contradictory.lower_bound == std::optional<std::int64_t>{8} &&
               contradictory.upper_bound == std::optional<std::int64_t>{7} &&
-              contradictory.empty_result && contradictory.residual_predicate_count == 0,
+              !contradictory.index_scan_direction && contradictory.empty_result &&
+              contradictory.residual_predicate_count == 0,
           "EXPLAIN should identify contradictory bounds as an empty access path");
 
     const auto equality_preferred = pageforge::explain_select(
@@ -1716,12 +1721,13 @@ void sql_explain_reports_access_paths_without_running_rows() {
     while (auto descending_row = descending_range.next()) {
       descending_ids.push_back(std::get<std::int64_t>(descending_row->values[0]));
     }
+    const auto descending_explain = pageforge::explain_select(
+        catalog,
+        pageforge::parse_select("SELECT id FROM items WHERE id >= 7 ORDER BY id DESC"));
     check(descending_ids == std::vector<std::int64_t>{9, 8, 7} &&
-              !pageforge::explain_select(
-                   catalog,
-                   pageforge::parse_select(
-                       "SELECT id FROM items WHERE id >= 7 ORDER BY id DESC"))
-                   .sorts_rows,
+              descending_explain.index_scan_direction ==
+                  pageforge::IndexScanDirection::Reverse &&
+              !descending_explain.sorts_rows,
           "descending index order should satisfy ORDER BY without a blocking sort");
 
     const auto impossible = pageforge::explain_select(

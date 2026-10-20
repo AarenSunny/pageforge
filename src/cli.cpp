@@ -234,6 +234,14 @@ void print_explanation(const pageforge::SelectExplanation& explanation) {
     std::cout << " upper=";
     if (explanation.upper_bound) std::cout << *explanation.upper_bound;
     else std::cout << "none";
+    if (explanation.index_scan_direction) {
+      std::cout << " direction=";
+      if (*explanation.index_scan_direction == pageforge::IndexScanDirection::Reverse) {
+        std::cout << "reverse";
+      } else {
+        std::cout << "forward";
+      }
+    }
   }
   if (explanation.empty_result) std::cout << " empty=true";
   std::cout << " predicates=" << explanation.predicate_count

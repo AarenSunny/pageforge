@@ -35,8 +35,9 @@ if (result.access_path() == pageforge::SelectAccessPath::IndexLookup) {
 
 auto explanation = pageforge::explain_select(catalog, plan);
 // explanation contains TABLE_SCAN, INDEX_LOOKUP, or INDEX_RANGE; the resolved
-// table; optional index, key, or inclusive candidate bounds; total and residual
-// predicate counts; whether execution adds a blocking sort; and the limit.
+// table; optional index, key, or inclusive candidate bounds and scan direction;
+// total and residual predicate counts; whether execution adds a blocking sort;
+// and the limit.
 ```
 
 Exact equality is preferred over range access even when its predicate appears
@@ -98,7 +99,7 @@ command. Query rows use escaped, tab-separated text, while explanations emit
 one stable line such as
 `INDEX_LOOKUP table=people index=people_id_idx key=7 predicates=2 residual_predicates=1 sort=false limit=none`.
 Range explanations use inclusive candidate bounds, for example
-`INDEX_RANGE table=people index=people_id_idx lower=7 upper=none predicates=1 residual_predicates=0 sort=false limit=none`.
+`INDEX_RANGE table=people index=people_id_idx lower=7 upper=none direction=forward predicates=1 residual_predicates=0 sort=false limit=none`.
 For an index access, `residual_predicates` excludes every compatible integer
 bound that the access path fully covers; all filters still run during execution
 as a safety check. Strict `<` and `>` bounds become inclusive by retreating or

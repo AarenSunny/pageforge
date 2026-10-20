@@ -20,6 +20,7 @@ class SqlBindError final : public std::runtime_error {
 };
 
 enum class SelectAccessPath { TableScan, IndexLookup, IndexRange };
+enum class IndexScanDirection { Forward, Reverse };
 
 struct SelectExplanation {
   std::string table;
@@ -28,6 +29,7 @@ struct SelectExplanation {
   std::optional<std::int64_t> lookup_key;
   std::optional<std::int64_t> lower_bound;
   std::optional<std::int64_t> upper_bound;
+  std::optional<IndexScanDirection> index_scan_direction;
   bool empty_result = false;
   std::size_t predicate_count = 0;
   std::size_t residual_predicate_count = 0;

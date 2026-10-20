@@ -372,6 +372,11 @@ SelectExplanation explain_select(Catalog& catalog, const SelectPlan& plan) {
     explanation.lookup_key = analyzed.access->key;
     explanation.lower_bound = analyzed.access->lower;
     explanation.upper_bound = analyzed.access->upper;
+    if (analyzed.access->path == SelectAccessPath::IndexRange && !analyzed.access->empty) {
+      explanation.index_scan_direction = analyzed.reverses_index_order
+                                             ? IndexScanDirection::Reverse
+                                             : IndexScanDirection::Forward;
+    }
     explanation.empty_result = analyzed.access->empty;
   }
   explanation.predicate_count = plan.predicates.size();
