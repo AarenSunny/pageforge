@@ -35,6 +35,7 @@ struct SelectExplanation {
   std::size_t residual_predicate_count = 0;
   bool sorts_rows = false;
   std::optional<std::size_t> limit;
+  std::optional<std::size_t> candidate_limit;
 
   bool operator==(const SelectExplanation&) const = default;
 };

@@ -38,7 +38,9 @@ decoded `TableRow` values. It cross-checks every hit against catalog ownership,
 the row's table envelope, and the indexed column value before returning it.
 `lookup_index_range(name, lower, upper)` applies the same checks to an inclusive
 range; either optional endpoint can be unbounded, and results retain B+ tree key
-and record-ID order.
+and record-ID order. Both lookup methods accept an optional candidate limit.
+Forward ranges pass it into tree traversal; descending ranges apply it while
+decoding reverse-key groups because the current leaves have no reverse links.
 
 `create_index(name, table, column)` builds an integer B+ tree from all existing
 non-null table rows before registering it in the catalog. Duplicate keys remain

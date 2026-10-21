@@ -252,6 +252,9 @@ void print_explanation(const pageforge::SelectExplanation& explanation) {
   } else {
     std::cout << "none";
   }
+  if (explanation.candidate_limit) {
+    std::cout << " candidate_limit=" << *explanation.candidate_limit;
+  }
   std::cout << '\n';
 }
 

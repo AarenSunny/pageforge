@@ -284,6 +284,7 @@ struct AnalyzedSelect {
   std::optional<IndexAccess> access;
   bool sorts_rows;
   bool reverses_index_order;
+  std::optional<std::size_t> candidate_limit;
 };
 
 AnalyzedSelect analyze_select(Catalog& catalog, const SelectPlan& plan) {
@@ -328,8 +329,14 @@ AnalyzedSelect analyze_select(Catalog& catalog, const SelectPlan& plan) {
     order.reset();
     sorts_rows = false;
   }
+  std::optional<std::size_t> candidate_limit;
+  if (plan.limit && *plan.limit > 0 && access && !access->empty && !sorts_rows &&
+      access->covered_predicates == plan.predicates.size()) {
+    candidate_limit = plan.limit;
+  }
   return {std::move(table), std::move(predicates), std::move(order), std::move(output_schema),
-          std::move(projection), std::move(access), sorts_rows, reverses_index_order};
+          std::move(projection), std::move(access), sorts_rows, reverses_index_order,
+          candidate_limit};
 }
 
 }  // namespace
@@ -346,12 +353,14 @@ BoundSelect bind_select(TableStore& tables, Catalog& catalog, const SelectPlan& 
     }
     if (analyzed.access->path == SelectAccessPath::IndexLookup) {
       return Query::from_rows(
-          tables.lookup_index(analyzed.access->name, *analyzed.access->key),
+          tables.lookup_index(analyzed.access->name, *analyzed.access->key,
+                              analyzed.candidate_limit),
           analyzed.table.schema.size());
     }
     return Query::from_rows(
         tables.lookup_index_range(analyzed.access->name, analyzed.access->lower,
-                                  analyzed.access->upper, analyzed.reverses_index_order),
+                                  analyzed.access->upper, analyzed.reverses_index_order,
+                                  analyzed.candidate_limit),
         analyzed.table.schema.size());
   };
   auto query = make_query();
@@ -387,6 +396,7 @@ SelectExplanation explain_select(Catalog& catalog, const SelectPlan& plan) {
                                          (analyzed.access ? analyzed.access->covered_predicates : 0);
   explanation.sorts_rows = analyzed.sorts_rows;
   explanation.limit = plan.limit;
+  explanation.candidate_limit = analyzed.candidate_limit;
   return explanation;
 }
 

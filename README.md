@@ -7,7 +7,7 @@ A small relational database I'm writing from scratch in C++20 to learn how datab
 - Data lives in 4 KiB slotted pages with checksums, so corrupted pages get caught instead of silently read
 - A buffer pool caches pages in memory and evicts them with the clock algorithm
 - B+ tree indexes on integer columns, kept in sync on insert and delete
-- A small SQL subset: `SELECT` with `WHERE`, `ORDER BY`, and `LIMIT`, plus `EXPLAIN` to show whether a query uses an index
+- A small SQL subset: `SELECT` with `WHERE`, `ORDER BY`, and `LIMIT`, plus `EXPLAIN` to show index choice, direction, and safe limit pushdown
 - A CLI and interactive shell
 
 ```sh

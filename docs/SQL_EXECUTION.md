@@ -37,7 +37,7 @@ auto explanation = pageforge::explain_select(catalog, plan);
 // explanation contains TABLE_SCAN, INDEX_LOOKUP, or INDEX_RANGE; the resolved
 // table; optional index, key, or inclusive candidate bounds and scan direction;
 // total and residual predicate counts; whether execution adds a blocking sort;
-// and the limit.
+// the result limit; and any safe index-candidate limit.
 ```
 
 Exact equality is preferred over range access even when its predicate appears
@@ -77,6 +77,15 @@ including a wildcard query that returns the entire table schema even when
 access-path metadata, but it does not open the table cursor or index because no
 row can reach the output.
 
+A positive limit is pushed into an index lookup or range only when the selected
+index covers every predicate and already provides the required order. Point
+lookups and forward ranges then stop index traversal at that candidate count;
+row decoding stops at the same boundary. `EXPLAIN` reports the optimization as
+`candidate_limit=N`. A residual filter or blocking sort suppresses the pushdown
+because either could discard or reorder an earlier candidate. Opening an index
+still validates its complete durable tree, so this bounds candidate collection
+and row decoding rather than reopen-validation I/O.
+
 `ORDER BY` resolves against the source schema, so a query may order on a column
 that it does not project. Either direction on the selected range-index column
 uses the B+ tree's key order instead of adding a blocking sort. Descending reads
@@ -96,8 +105,10 @@ cursor or performing the planned index read.
 
 Execution remains single-threaded. Table scans inherit the underlying cursor's
 non-snapshot behavior; index accesses materialize candidate rows before the
-operator pipeline begins. The CLI exposes both paths through its `query`
-command. Query rows use escaped, tab-separated text, while explanations emit
+operator pipeline begins. Safe limit pushdown bounds that materialization, but
+descending ranges still enumerate matching index entries before reversing key
+groups because leaves have only forward links. The CLI exposes both paths
+through its `query` command. Query rows use escaped, tab-separated text, while explanations emit
 one stable line such as
 `INDEX_LOOKUP table=people index=people_id_idx key=7 predicates=2 residual_predicates=1 sort=false limit=none`.
 Range explanations use inclusive candidate bounds, for example

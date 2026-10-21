@@ -67,6 +67,10 @@ an exclusive bound beyond the integer domain becomes an empty range.
 Non-empty range plans report `direction=forward` or `direction=reverse`, making
 it clear when a descending request is satisfied by index traversal instead of
 a sort. Known-empty plans omit direction because they never open the index.
+When every predicate is covered and the chosen index also avoids a blocking
+sort, `candidate_limit=N` reports that execution stops loading index candidates
+at the query's positive `LIMIT`. Plans with residual filters or a blocking sort
+omit this field.
 Its `residual_predicates` field makes post-access filtering explicit: the
 equality or inclusive bound that the index fully covers is removed from that
 count. Normalized strict integer bounds are also fully covered, while table

@@ -877,6 +877,9 @@ void typed_tables_build_indexes_for_existing_rows() {
     const auto updated = tables.lookup_index("items_score_idx", 7);
     check(updated.size() == 3 && updated.back().id == third,
           "writes after index creation should continue automatic maintenance");
+    const auto limited = tables.lookup_index("items_score_idx", 7, 2);
+    check(limited.size() == 2 && limited[0].id == first && limited[1].id == second,
+          "limited point lookups should stop after the requested candidate count");
     check_throws<std::invalid_argument>(
         [&] { (void)tables.create_index("items_score_idx", "items", "score"); },
         "building a duplicate index should fail before allocating another tree");
@@ -925,6 +928,14 @@ void typed_tables_read_validated_index_ranges() {
     check(descending.size() == 4 && descending[0].id == high && descending[1].id == first &&
               descending[2].id == second && descending[3].id == low,
           "descending typed ranges should reverse keys while retaining duplicate-key order");
+    const auto limited = tables.lookup_index_range("items_score_idx", 7, 9, false, 2);
+    check(limited.size() == 2 && limited[0].id == first && limited[1].id == second,
+          "limited forward ranges should retain the ordered candidate prefix");
+    const auto limited_descending =
+        tables.lookup_index_range("items_score_idx", std::nullopt, std::nullopt, true, 2);
+    check(limited_descending.size() == 2 && limited_descending[0].id == high &&
+              limited_descending[1].id == first,
+          "limited descending ranges should retain the reverse-key prefix");
     check_throws<std::invalid_argument>(
         [&] { (void)tables.lookup_index_range("items_score_idx", 9, 7); },
         "typed index ranges should reject reversed endpoints");
@@ -1547,6 +1558,23 @@ void sql_execution_uses_indexed_equality_lookups() {
     check(unequal_scan.access_path() == pageforge::SelectAccessPath::TableScan,
           "non-contiguous inequality predicates should retain a table scan");
 
+    auto residual_limit = pageforge::execute_select_sql(
+        tables, catalog, "SELECT name FROM Items WHERE id >= 2 AND active = TRUE LIMIT 1");
+    const auto residual_row = residual_limit.next();
+    check(residual_row && residual_row->id == two_id &&
+              residual_row->values == pageforge::Tuple{std::string("two-a")} &&
+              !residual_limit.next(),
+          "LIMIT pushdown should wait until residual filters have selected a row");
+
+    check(index.insert(3, one_id), "test should be able to inject a stale range tail");
+    auto limited_range = pageforge::execute_select_sql(
+        tables, catalog, "SELECT id FROM Items WHERE id >= 2 ORDER BY id LIMIT 2");
+    check(limited_range.next() && limited_range.next() && !limited_range.next(),
+          "covered ordered ranges should stop before decoding candidates beyond LIMIT");
+    check_throws<TableCorruption>(
+        [&] { (void)tables.lookup_index_range("items_id_idx", 2, std::nullopt); },
+        "unlimited range should prove the skipped tail entry is corrupt");
+
     check(index.insert(999, one_id), "test should be able to inject a stale logical index entry");
     check_throws<TableCorruption>([&] { (void)tables.lookup_index("items_id_idx", 999); },
                                   "index lookup should reject keys that disagree with table rows");
@@ -1577,7 +1605,8 @@ void sql_explain_reports_access_paths_without_running_rows() {
     check(scan.table == "Items" && scan.access_path == pageforge::SelectAccessPath::TableScan &&
               !scan.index_name && !scan.lookup_key && !scan.index_scan_direction &&
               scan.predicate_count == 1 &&
-              scan.residual_predicate_count == 1 && scan.sorts_rows && scan.limit == 1,
+              scan.residual_predicate_count == 1 && scan.sorts_rows && scan.limit == 1 &&
+              !scan.candidate_limit,
           "EXPLAIN should report validated table-scan planning metadata");
 
     (void)tables.create_index("items_id_idx", "Items", "id");
@@ -1586,7 +1615,8 @@ void sql_explain_reports_access_paths_without_running_rows() {
               indexed.index_name == std::optional<std::string>{"items_id_idx"} &&
               indexed.lookup_key == std::optional<std::int64_t>{7} &&
               !indexed.index_scan_direction &&
-              indexed.predicate_count == 1 && indexed.residual_predicate_count == 0,
+              indexed.predicate_count == 1 && indexed.residual_predicate_count == 0 &&
+              !indexed.candidate_limit,
           "EXPLAIN should identify the chosen equality index and lookup key");
 
     const auto residual = pageforge::explain_select(
@@ -1737,6 +1767,21 @@ void sql_explain_reports_access_paths_without_running_rows() {
               !descending_explain.sorts_rows,
           "descending index order should satisfy ORDER BY without a blocking sort");
 
+    const auto limited_explain = pageforge::explain_select(
+        catalog,
+        pageforge::parse_select(
+            "SELECT id FROM items WHERE id >= 7 ORDER BY id DESC LIMIT 2"));
+    check(limited_explain.candidate_limit == std::optional<std::size_t>{2} &&
+              !limited_explain.sorts_rows,
+          "EXPLAIN should expose safe LIMIT pushdown into an ordered index range");
+    const auto residual_limit_explain = pageforge::explain_select(
+        catalog,
+        pageforge::parse_select(
+            "SELECT id FROM items WHERE id >= 7 AND name != 'none' ORDER BY id LIMIT 1"));
+    check(residual_limit_explain.residual_predicate_count == 1 &&
+              !residual_limit_explain.candidate_limit,
+          "EXPLAIN should withhold LIMIT pushdown when a residual filter remains");
+
     const auto impossible = pageforge::explain_select(
         catalog,
         pageforge::parse_select("SELECT name FROM items WHERE id = 7 AND id < 7"));
@@ -1803,9 +1848,15 @@ void bplus_tree_routes_splits_ranges_and_reopens() {
     const auto matches = index.find(42);
     check(matches == std::vector<RecordId>{{10, 42}, {99, 1}, {99, 2}},
           "point lookup should return duplicate-key record IDs in stable order");
+    check(index.find(42, 2) == std::vector<RecordId>{{10, 42}, {99, 1}},
+          "limited point lookup should stop at the stable result prefix");
     const auto range = index.range(120, 135);
     check(range.size() == 16 && range.front().key == 120 && range.back().key == 135,
           "inclusive range lookup should cross split leaf boundaries in key order");
+    const auto limited_range = index.range(120, 135, 3);
+    check(limited_range.size() == 3 && limited_range.front().key == 120 &&
+              limited_range.back().key == 122,
+          "limited range lookup should stop traversal at the requested prefix");
     for (std::size_t offset = 1; offset < range.size(); ++offset) {
       check(range[offset - 1].key + 1 == range[offset].key,
             "range lookup should not skip or reorder keys");
