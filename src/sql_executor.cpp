@@ -389,8 +389,9 @@ SelectExplanation explain_select(Catalog& catalog, const SelectPlan& plan) {
                                              ? IndexScanDirection::Reverse
                                              : IndexScanDirection::Forward;
     }
-    explanation.empty_result = analyzed.access->empty;
   }
+  explanation.empty_result = (plan.limit && *plan.limit == 0) ||
+                             (analyzed.access && analyzed.access->empty);
   explanation.predicate_count = plan.predicates.size();
   explanation.residual_predicate_count = plan.predicates.size() -
                                          (analyzed.access ? analyzed.access->covered_predicates : 0);

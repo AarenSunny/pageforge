@@ -75,7 +75,8 @@ null tests for columns of any type. The output exposes its projected `Schema`,
 including a wildcard query that returns the entire table schema even when
 `LIMIT 0` yields no rows. A zero limit completes binding and retains the chosen
 access-path metadata, but it does not open the table cursor or index because no
-row can reach the output.
+row can reach the output. `EXPLAIN` marks that result `empty=true` while still
+showing the access path that binding selected.
 
 A positive limit is pushed into an index lookup or range only when the selected
 index covers every predicate and already provides the required order. Point

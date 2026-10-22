@@ -1609,6 +1609,12 @@ void sql_explain_reports_access_paths_without_running_rows() {
               !scan.candidate_limit,
           "EXPLAIN should report validated table-scan planning metadata");
 
+    const auto zero_scan = pageforge::explain_select(
+        catalog, pageforge::parse_select("SELECT name FROM items LIMIT 0"));
+    check(zero_scan.access_path == pageforge::SelectAccessPath::TableScan &&
+              zero_scan.empty_result && zero_scan.limit == std::optional<std::size_t>{0},
+          "EXPLAIN should report LIMIT zero table scans as known-empty results");
+
     (void)tables.create_index("items_id_idx", "Items", "id");
     const auto indexed = pageforge::explain_select(catalog, plan);
     check(indexed.access_path == pageforge::SelectAccessPath::IndexLookup &&
@@ -1618,6 +1624,13 @@ void sql_explain_reports_access_paths_without_running_rows() {
               indexed.predicate_count == 1 && indexed.residual_predicate_count == 0 &&
               !indexed.candidate_limit,
           "EXPLAIN should identify the chosen equality index and lookup key");
+
+    const auto zero_lookup = pageforge::explain_select(
+        catalog, pageforge::parse_select("SELECT name FROM items WHERE id = 7 LIMIT 0"));
+    check(zero_lookup.access_path == pageforge::SelectAccessPath::IndexLookup &&
+              zero_lookup.lookup_key == std::optional<std::int64_t>{7} &&
+              zero_lookup.empty_result && !zero_lookup.candidate_limit,
+          "EXPLAIN should retain index choice while marking LIMIT zero as known-empty");
 
     const auto residual = pageforge::explain_select(
         catalog,
