@@ -10,10 +10,24 @@ A small relational database I'm writing from scratch in C++20 to learn how datab
 - A small SQL subset: `SELECT` with `WHERE`, `ORDER BY`, and `LIMIT`, plus `EXPLAIN` to show index choice, direction, and safe limit pushdown
 - A CLI and interactive shell
 
+## Try it
+
+Use a new database path; the demo generator refuses to overwrite an existing
+file.
+
 ```sh
-make check                       # build and run tests
-./build/pageforge demo.db shell  # interactive SQL
+make check
+./tools/create_demo_database.sh demo.db
+./build/pageforge demo.db query \
+  "EXPLAIN SELECT name, id FROM people WHERE id >= 2 ORDER BY id DESC LIMIT 2;"
+./build/pageforge demo.db query \
+  "SELECT name, id FROM people WHERE id >= 2 ORDER BY id DESC LIMIT 2;"
+./build/pageforge demo.db shell
 ```
+
+The generator creates five deterministic rows and an integer index. The full
+three-minute walkthrough and benchmark method are in
+[`docs/DEMO.md`](docs/DEMO.md) and [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md).
 
 ## The bug I learned the most from
 
