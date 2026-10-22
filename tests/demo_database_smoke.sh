@@ -28,6 +28,18 @@ plan=$("$cli" "$database" query \
 expected_plan='INDEX_LOOKUP table=people index=people_id_idx key=3 predicates=1 residual_predicates=0 sort=false limit=none'
 [ "$plan" = "$expected_plan" ]
 
+quickstart_plan=$("$cli" "$database" query \
+    "EXPLAIN SELECT name, id FROM people WHERE id >= 2 ORDER BY id DESC LIMIT 2;")
+expected_quickstart_plan='INDEX_RANGE table=people index=people_id_idx lower=2 upper=none direction=reverse predicates=1 residual_predicates=0 sort=false limit=2 candidate_limit=2'
+[ "$quickstart_plan" = "$expected_quickstart_plan" ]
+
+quickstart_rows=$("$cli" "$database" query \
+    "SELECT name, id FROM people WHERE id >= 2 ORDER BY id DESC LIMIT 2;")
+expected_quickstart_rows='name	id
+Katherine Johnson	5
+Linus Torvalds	4'
+[ "$quickstart_rows" = "$expected_quickstart_rows" ]
+
 names=$("$cli" "$database" query \
     "SELECT name FROM people WHERE active = TRUE ORDER BY id;")
 expected_names='name
