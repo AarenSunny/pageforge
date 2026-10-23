@@ -101,7 +101,7 @@ safety.
   from 784,030 microseconds to a 70,139-microsecond median after the change.
 - Index construction is single-threaded and non-transactional. Failed builds
   can leave unreachable internal records until recovery support exists.
-- Sorts that cannot reuse ascending index order are stable but blocking, and
+- Sorts that cannot reuse the selected index's key order are stable but blocking, and
   there is no write-ahead log or isolation.
 
 ## Defensible résumé bullets

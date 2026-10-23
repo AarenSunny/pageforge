@@ -25,7 +25,8 @@ idempotent, while one key may map to multiple record IDs. `erase` removes only
 the exact `(key, RecordId)` pair and returns false when it is absent. Entries
 are ordered by signed key and then by page and slot, making duplicate-key
 results deterministic. Bounds passed to `range` are inclusive; either may be
-absent.
+absent. `find` and `range` accept an optional result limit and stop following
+leaf links once that ordered prefix is complete.
 
 ## On-disk records
 

@@ -502,7 +502,9 @@ bool BPlusTreeIndex::erase(std::int64_t key, RecordId value) {
   return true;
 }
 
-std::vector<RecordId> BPlusTreeIndex::find(std::int64_t key) {
+std::vector<RecordId> BPlusTreeIndex::find(std::int64_t key,
+                                           std::optional<std::size_t> limit) {
+  if (limit == 0) return {};
   RecordId start = root_;
   if (height_ == 2) {
     const auto internal = load_internal(records_, root_);
@@ -511,7 +513,10 @@ std::vector<RecordId> BPlusTreeIndex::find(std::int64_t key) {
   std::vector<RecordId> result;
   visit_from(records_, start, [&](const Leaf& leaf) {
     for (const auto& entry : leaf.entries) {
-      if (entry.key == key) result.push_back(entry.value);
+      if (entry.key == key) {
+        result.push_back(entry.value);
+        if (limit && result.size() == *limit) return false;
+      }
     }
     return leaf.entries.empty() || leaf.entries.back().key <= key;
   });
@@ -519,10 +524,12 @@ std::vector<RecordId> BPlusTreeIndex::find(std::int64_t key) {
 }
 
 std::vector<IndexEntry> BPlusTreeIndex::range(std::optional<std::int64_t> lower,
-                                               std::optional<std::int64_t> upper) {
+                                               std::optional<std::int64_t> upper,
+                                               std::optional<std::size_t> limit) {
   if (lower && upper && *lower > *upper) {
     throw std::invalid_argument("index range lower bound exceeds upper bound");
   }
+  if (limit == 0) return {};
   RecordId start = first_leaf_;
   if (lower && height_ == 2) {
     const auto internal = load_internal(records_, root_);
@@ -534,6 +541,7 @@ std::vector<IndexEntry> BPlusTreeIndex::range(std::optional<std::int64_t> lower,
       if (lower && entry.key < *lower) continue;
       if (upper && entry.key > *upper) return false;
       result.push_back(entry);
+      if (limit && result.size() == *limit) return false;
     }
     return true;
   });

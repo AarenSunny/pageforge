@@ -35,8 +35,9 @@ if (result.access_path() == pageforge::SelectAccessPath::IndexLookup) {
 
 auto explanation = pageforge::explain_select(catalog, plan);
 // explanation contains TABLE_SCAN, INDEX_LOOKUP, or INDEX_RANGE; the resolved
-// table; optional index, key, or inclusive candidate bounds; total and residual
-// predicate counts; whether execution adds a blocking sort; and the limit.
+// table; optional index, key, or inclusive candidate bounds and scan direction;
+// total and residual predicate counts; whether execution adds a blocking sort;
+// the result limit; and any safe index-candidate limit.
 ```
 
 Exact equality is preferred over range access even when its predicate appears
@@ -45,8 +46,8 @@ indexed column against its singleton key. Compatible constraints need no
 residual filter; a contradiction produces a known-empty lookup without opening
 the tree. Otherwise, the planner merges compatible bounds for every candidate
 index. It prefers a known-empty range, then a two-sided range, then the candidate
-covering more predicates. A tie prefers an index that also provides a requested
-ascending order, avoiding a blocking sort without discarding a structurally
+covering more predicates. A tie prefers an index that also provides the
+requested order, avoiding a blocking sort without discarding a structurally
 stronger range. This is a deterministic structural heuristic, not a cardinality
 or cost estimate. Crossing bounds produce a known-empty range:
 execution constructs an empty row source without opening the tree, while
@@ -72,13 +73,27 @@ the result is unknown and the row is removed by `WHERE`; consequently
 `column = NULL` matches no rows. `IS NULL` and `IS NOT NULL` provide explicit
 null tests for columns of any type. The output exposes its projected `Schema`,
 including a wildcard query that returns the entire table schema even when
-`LIMIT 0` yields no rows.
+`LIMIT 0` yields no rows. A zero limit completes binding and retains the chosen
+access-path metadata, but it does not open the table cursor or index because no
+row can reach the output. `EXPLAIN` marks that result `empty=true` while still
+showing the access path that binding selected.
+
+A positive limit is pushed into an index lookup or range only when the selected
+index covers every predicate and already provides the required order. Point
+lookups and forward ranges then stop index traversal at that candidate count;
+row decoding stops at the same boundary. `EXPLAIN` reports the optimization as
+`candidate_limit=N`. A residual filter or blocking sort suppresses the pushdown
+because either could discard or reorder an earlier candidate. Opening an index
+still validates its complete durable tree, so this bounds candidate collection
+and row decoding rather than reopen-validation I/O.
 
 `ORDER BY` resolves against the source schema, so a query may order on a column
-that it does not project. An ascending order on the selected range-index column
-uses the B+ tree's existing key order instead of adding a blocking sort. An exact
-lookup may use that order in either direction because every candidate has the
-same key. Other orders sort after filtering and before projection and limit.
+that it does not project. Either direction on the selected range-index column
+uses the B+ tree's key order instead of adding a blocking sort. Descending reads
+reverse the materialized key groups while preserving record order within equal
+keys; the leaf format does not yet store reverse sibling links. An exact lookup
+may use index order in either direction because every candidate has the same
+key. Other orders sort after filtering and before projection and limit.
 They compare integers numerically, text by `std::string` byte order, and booleans
 with `false` before `true`; nulls sort last in both directions. The fallback sort
 is stable but blocking and currently keeps every filtered row in memory.
@@ -91,12 +106,14 @@ cursor or performing the planned index read.
 
 Execution remains single-threaded. Table scans inherit the underlying cursor's
 non-snapshot behavior; index accesses materialize candidate rows before the
-operator pipeline begins. The CLI exposes both paths through its `query`
-command. Query rows use escaped, tab-separated text, while explanations emit
+operator pipeline begins. Safe limit pushdown bounds that materialization, but
+descending ranges still enumerate matching index entries before reversing key
+groups because leaves have only forward links. The CLI exposes both paths
+through its `query` command. Query rows use escaped, tab-separated text, while explanations emit
 one stable line such as
 `INDEX_LOOKUP table=people index=people_id_idx key=7 predicates=2 residual_predicates=1 sort=false limit=none`.
 Range explanations use inclusive candidate bounds, for example
-`INDEX_RANGE table=people index=people_id_idx lower=7 upper=none predicates=1 residual_predicates=0 sort=false limit=none`.
+`INDEX_RANGE table=people index=people_id_idx lower=7 upper=none direction=forward predicates=1 residual_predicates=0 sort=false limit=none`.
 For an index access, `residual_predicates` excludes every compatible integer
 bound that the access path fully covers; all filters still run during execution
 as a safety check. Strict `<` and `>` bounds become inclusive by retreating or

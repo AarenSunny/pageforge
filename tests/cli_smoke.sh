@@ -82,10 +82,16 @@ special=$(printf 'Tab\tName\\Path')
   "verified index people_id_idx rows=5" ]
 [ "$("$cli" "$database" query "EXPLAIN SELECT name FROM people WHERE id = 2")" = \
   "INDEX_LOOKUP table=People index=people_id_idx key=2 predicates=1 residual_predicates=0 sort=false limit=none" ]
+[ "$("$cli" "$database" query "EXPLAIN SELECT name FROM people WHERE id = 2 LIMIT 0")" = \
+  "INDEX_LOOKUP table=People index=people_id_idx key=2 empty=true predicates=1 residual_predicates=0 sort=false limit=0" ]
 [ "$("$cli" "$database" query "EXPLAIN SELECT name FROM people WHERE id >= 2 ORDER BY name LIMIT 3")" = \
-  "INDEX_RANGE table=People index=people_id_idx lower=2 upper=none predicates=1 residual_predicates=0 sort=true limit=3" ]
+  "INDEX_RANGE table=People index=people_id_idx lower=2 upper=none direction=forward predicates=1 residual_predicates=0 sort=true limit=3" ]
 [ "$("$cli" "$database" query "EXPLAIN SELECT name FROM people WHERE id >= 2 ORDER BY ID LIMIT 3")" = \
-  "INDEX_RANGE table=People index=people_id_idx lower=2 upper=none predicates=1 residual_predicates=0 sort=false limit=3" ]
+  "INDEX_RANGE table=People index=people_id_idx lower=2 upper=none direction=forward predicates=1 residual_predicates=0 sort=false limit=3 candidate_limit=3" ]
+[ "$("$cli" "$database" query "EXPLAIN SELECT name FROM people WHERE id >= 2 ORDER BY ID DESC LIMIT 3")" = \
+  "INDEX_RANGE table=People index=people_id_idx lower=2 upper=none direction=reverse predicates=1 residual_predicates=0 sort=false limit=3 candidate_limit=3" ]
+[ "$("$cli" "$database" query "SELECT id FROM people WHERE id >= 2 ORDER BY ID DESC LIMIT 3")" = \
+  "$(printf 'id\n5\n4\n3')" ]
 [ "$("$cli" "$database" query "EXPLAIN SELECT name FROM people WHERE id >= 3 AND id <= 2")" = \
   "INDEX_RANGE table=People index=people_id_idx lower=3 upper=2 empty=true predicates=2 residual_predicates=0 sort=false limit=none" ]
 [ "$("$cli" "$database" query "EXPLAIN SELECT name FROM people WHERE id = 2 AND id < 2")" = \

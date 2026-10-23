@@ -252,7 +252,8 @@ RecordId TableStore::create_index(std::string_view index_name, std::string_view 
       {std::string(index_name), table.name, column->name, index.header_id()});
 }
 
-std::vector<TableRow> TableStore::lookup_index(std::string_view index_name, std::int64_t key) {
+std::vector<TableRow> TableStore::lookup_index(std::string_view index_name, std::int64_t key,
+                                               std::optional<std::size_t> limit) {
   const auto definition = catalog_.find_index(index_name);
   if (!definition) throw std::out_of_range("index does not exist");
   const auto table = require_table(definition->table);
@@ -265,7 +266,7 @@ std::vector<TableRow> TableStore::lookup_index(std::string_view index_name, std:
   const auto position = static_cast<std::size_t>(column - table.schema.begin());
   auto index = BPlusTreeIndex::open(records_, definition->header_id);
   std::vector<TableRow> rows;
-  for (const auto id : index.find(key)) {
+  for (const auto id : index.find(key, limit)) {
     rows.push_back(read_index_row(records_, table, position, key, id));
   }
   return rows;
@@ -273,7 +274,8 @@ std::vector<TableRow> TableStore::lookup_index(std::string_view index_name, std:
 
 std::vector<TableRow> TableStore::lookup_index_range(
     std::string_view index_name, std::optional<std::int64_t> lower,
-    std::optional<std::int64_t> upper) {
+    std::optional<std::int64_t> upper, bool descending,
+    std::optional<std::size_t> limit) {
   const auto definition = catalog_.find_index(index_name);
   if (!definition) throw std::out_of_range("index does not exist");
   const auto table = require_table(definition->table);
@@ -285,9 +287,30 @@ std::vector<TableRow> TableStore::lookup_index_range(
   }
   const auto position = static_cast<std::size_t>(column - table.schema.begin());
   auto index = BPlusTreeIndex::open(records_, definition->header_id);
+  const bool needs_full_forward_range = descending && (!limit || *limit > 0);
+  const auto entries = index.range(
+      lower, upper, needs_full_forward_range ? std::nullopt : limit);
   std::vector<TableRow> rows;
-  for (const auto& entry : index.range(lower, upper)) {
-    rows.push_back(read_index_row(records_, table, position, entry.key, entry.value));
+  rows.reserve(limit ? std::min(entries.size(), *limit) : entries.size());
+  if (!descending) {
+    for (const auto& entry : entries) {
+      rows.push_back(read_index_row(records_, table, position, entry.key, entry.value));
+    }
+    return rows;
+  }
+
+  std::size_t group_end = entries.size();
+  while (group_end > 0) {
+    std::size_t group_begin = group_end - 1;
+    while (group_begin > 0 && entries[group_begin - 1].key == entries[group_end - 1].key) {
+      --group_begin;
+    }
+    for (std::size_t offset = group_begin; offset < group_end; ++offset) {
+      const auto& entry = entries[offset];
+      rows.push_back(read_index_row(records_, table, position, entry.key, entry.value));
+      if (limit && rows.size() == *limit) return rows;
+    }
+    group_end = group_begin;
   }
   return rows;
 }

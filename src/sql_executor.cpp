@@ -263,7 +263,7 @@ std::optional<IndexAccess> choose_index(Catalog& catalog, const TableDefinition&
            static_cast<std::size_t>(access.upper.has_value());
   };
   const auto reuses_order = [&](const IndexAccess& access) {
-    return order && !order->descending && equal_name(access.column, order->column);
+    return order && equal_name(access.column, order->column);
   };
   return *std::max_element(ranges.begin(), ranges.end(), [&](const auto& left, const auto& right) {
     if (left.empty != right.empty) return !left.empty;
@@ -283,6 +283,8 @@ struct AnalyzedSelect {
   std::optional<std::vector<std::size_t>> projection;
   std::optional<IndexAccess> access;
   bool sorts_rows;
+  bool reverses_index_order;
+  std::optional<std::size_t> candidate_limit;
 };
 
 AnalyzedSelect analyze_select(Catalog& catalog, const SelectPlan& plan) {
@@ -315,15 +317,26 @@ AnalyzedSelect analyze_select(Catalog& catalog, const SelectPlan& plan) {
 
   auto access = choose_index(catalog, table, plan.predicates, plan.order);
   bool sorts_rows = plan.order.has_value();
+  const bool matching_index_order =
+      plan.order && access && equal_name(access->column, plan.order->column) &&
+      (access->path == SelectAccessPath::IndexLookup ||
+       access->path == SelectAccessPath::IndexRange);
+  const bool reverses_index_order =
+      matching_index_order && plan.order->descending &&
+      access->path == SelectAccessPath::IndexRange && !access->empty;
   if (plan.order && access &&
-      (access->empty ||
-       (equal_name(access->column, plan.order->column) &&
-        (access->path == SelectAccessPath::IndexLookup || !plan.order->descending)))) {
+      (access->empty || matching_index_order)) {
     order.reset();
     sorts_rows = false;
   }
+  std::optional<std::size_t> candidate_limit;
+  if (plan.limit && *plan.limit > 0 && access && !access->empty && !sorts_rows &&
+      access->covered_predicates == plan.predicates.size()) {
+    candidate_limit = plan.limit;
+  }
   return {std::move(table), std::move(predicates), std::move(order), std::move(output_schema),
-          std::move(projection), std::move(access), sorts_rows};
+          std::move(projection), std::move(access), sorts_rows, reverses_index_order,
+          candidate_limit};
 }
 
 }  // namespace
@@ -331,18 +344,23 @@ AnalyzedSelect analyze_select(Catalog& catalog, const SelectPlan& plan) {
 BoundSelect bind_select(TableStore& tables, Catalog& catalog, const SelectPlan& plan) {
   auto analyzed = analyze_select(catalog, plan);
   auto make_query = [&]() {
+    if (plan.limit && *plan.limit == 0) {
+      return Query::from_rows({}, analyzed.table.schema.size());
+    }
     if (!analyzed.access) return Query::from(tables, analyzed.table.name);
     if (analyzed.access->empty) {
       return Query::from_rows({}, analyzed.table.schema.size());
     }
     if (analyzed.access->path == SelectAccessPath::IndexLookup) {
       return Query::from_rows(
-          tables.lookup_index(analyzed.access->name, *analyzed.access->key),
+          tables.lookup_index(analyzed.access->name, *analyzed.access->key,
+                              analyzed.candidate_limit),
           analyzed.table.schema.size());
     }
     return Query::from_rows(
         tables.lookup_index_range(analyzed.access->name, analyzed.access->lower,
-                                  analyzed.access->upper),
+                                  analyzed.access->upper, analyzed.reverses_index_order,
+                                  analyzed.candidate_limit),
         analyzed.table.schema.size());
   };
   auto query = make_query();
@@ -366,13 +384,20 @@ SelectExplanation explain_select(Catalog& catalog, const SelectPlan& plan) {
     explanation.lookup_key = analyzed.access->key;
     explanation.lower_bound = analyzed.access->lower;
     explanation.upper_bound = analyzed.access->upper;
-    explanation.empty_result = analyzed.access->empty;
+    if (analyzed.access->path == SelectAccessPath::IndexRange && !analyzed.access->empty) {
+      explanation.index_scan_direction = analyzed.reverses_index_order
+                                             ? IndexScanDirection::Reverse
+                                             : IndexScanDirection::Forward;
+    }
   }
+  explanation.empty_result = (plan.limit && *plan.limit == 0) ||
+                             (analyzed.access && analyzed.access->empty);
   explanation.predicate_count = plan.predicates.size();
   explanation.residual_predicate_count = plan.predicates.size() -
                                          (analyzed.access ? analyzed.access->covered_predicates : 0);
   explanation.sorts_rows = analyzed.sorts_rows;
   explanation.limit = plan.limit;
+  explanation.candidate_limit = analyzed.candidate_limit;
   return explanation;
 }
 
