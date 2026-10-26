@@ -8,6 +8,7 @@ cannot be reported as a successful timing.
 
 ```bash
 make benchmark
+make benchmark-environment > environment.json
 ./build/pageforge_bench benchmark.db 1000
 rm benchmark.db
 ```
@@ -15,6 +16,13 @@ rm benchmark.db
 The database path must not already exist and the row count must be from 1 to
 10,000,000. The tool deliberately leaves the database behind so its size and
 contents can be inspected after the run.
+
+The environment sidecar records the operating system, architecture,
+best-effort CPU model, logical CPU count, compiler, build flags, Git revision,
+and whether the working tree is clean. Review it before sharing because build
+flags can contain local paths. CPU discovery can fall back to the processor or
+architecture name; the report is context for a local measurement, not proof
+that results transfer to comparable hardware.
 
 The JSON fields are:
 

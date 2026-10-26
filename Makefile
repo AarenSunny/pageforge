@@ -8,7 +8,7 @@ TEST_BINARY := build/pageforge_tests
 CLI_BINARY := build/pageforge
 BENCH_BINARY := build/pageforge_bench
 
-.PHONY: all test demo-smoke benchmark benchmark-smoke check clean
+.PHONY: all test demo-smoke benchmark benchmark-smoke benchmark-environment check clean
 
 all: $(TEST_BINARY) $(CLI_BINARY) $(BENCH_BINARY)
 
@@ -35,6 +35,9 @@ benchmark: $(BENCH_BINARY)
 
 benchmark-smoke: $(BENCH_BINARY)
 	sh tests/benchmark_smoke.sh ./$(BENCH_BINARY)
+
+benchmark-environment:
+	@python3 ./tools/environment_report.py --compiler="$(CXX)" --cppflags="$(CPPFLAGS)" --cxxflags="$(CXXFLAGS)"
 
 check: test demo-smoke benchmark-smoke
 

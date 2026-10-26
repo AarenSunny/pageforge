@@ -17,6 +17,7 @@ file.
 
 ```sh
 make check
+make benchmark-environment > environment.json
 ./tools/create_demo_database.sh demo.db
 ./build/pageforge demo.db query \
   "EXPLAIN SELECT name, id FROM people WHERE id >= 2 ORDER BY id DESC LIMIT 2;"
@@ -28,6 +29,8 @@ make check
 The generator creates five deterministic rows and an integer index. The full
 three-minute walkthrough and benchmark method are in
 [`docs/DEMO.md`](docs/DEMO.md) and [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md).
+The environment sidecar records the machine, compiler, flags, revision, and
+working-tree state needed to interpret local benchmark results.
 
 ## The bug I learned the most from
 

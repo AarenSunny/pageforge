@@ -16,6 +16,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: make check
+      - run: make benchmark-environment
 
   sanitizers:
     runs-on: ubuntu-latest
