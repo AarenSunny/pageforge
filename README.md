@@ -2,6 +2,9 @@
 
 A small relational database I'm writing from scratch in C++20 to learn how databases actually store and find data. I became interested in backend development, especially data storage and analysis, and this project is my way of going deeper into both.
 
+Local checks require a C++20 compiler, Make, and Python 3 for validating the
+machine-readable benchmark contract.
+
 ## What works right now
 
 - Data lives in 4 KiB slotted pages with checksums, so corrupted pages get caught instead of silently read

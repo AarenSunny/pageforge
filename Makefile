@@ -34,7 +34,7 @@ demo-smoke: $(CLI_BINARY)
 benchmark: $(BENCH_BINARY)
 
 benchmark-smoke: $(BENCH_BINARY)
-	sh tests/benchmark_smoke.sh ./$(BENCH_BINARY)
+	python3 tests/benchmark_smoke.py ./$(BENCH_BINARY)
 
 benchmark-environment:
 	@python3 ./tools/environment_report.py --compiler="$(CXX)" --cppflags="$(CPPFLAGS)" --cxxflags="$(CXXFLAGS)"
