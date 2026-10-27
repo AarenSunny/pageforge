@@ -1,10 +1,12 @@
 # Reproducible benchmark harness
 
-`pageforge_bench` measures three end-to-end paths against a newly created
-database: durable typed-row insertion, a catalog-bound SQL filter, and a full
-table scan after closing and reopening the heap file. It validates row counts
-and ID checksums before emitting one JSON object, so corrupt or incomplete work
-cannot be reported as a successful timing.
+`pageforge_bench` measures five end-to-end paths against a newly created
+database: durable typed-row insertion, a catalog-bound SQL filter, integer
+index construction, a full table scan after closing and reopening the heap
+file, and an indexed equality query from a second reopen. It verifies that the
+planner selects the persisted index and validates row contents, counts, and ID
+checksums before emitting one JSON object, so corrupt or incomplete work cannot
+be reported as a successful timing.
 
 ```bash
 make benchmark
@@ -33,15 +35,20 @@ The JSON fields are:
 | --- | --- |
 | `rows` | Rows inserted and scanned after reopen |
 | `matched_rows` | Even-ID rows returned by the SQL predicate |
+| `indexed_rows` | Rows returned by the reopened equality lookup |
 | `*_microseconds` | Wall-clock duration for the named phase |
 | `*_rows_per_second` | Derived throughput using input rows for that phase |
 | `database_bytes` | Final heap-file size |
 | `selected_id_checksum` | Sum of IDs returned by the SQL filter |
+| `indexed_id_checksum` | Sum of IDs returned by the reopened index lookup |
 
-Insertion timing includes the final buffer-pool flush but excludes database and
-catalog creation. SQL selection runs before close and may benefit from the
-buffer pool. The reopen scan constructs a new heap, buffer pool, catalog, and
-table store, although the operating system page cache may still be warm.
+Insertion and index-build timings include their final buffer-pool flushes but
+exclude database and catalog creation. SQL selection runs before close and may
+benefit from the buffer pool. The reopen scan and reopened index lookup each
+construct a new heap, buffer pool, catalog, and table store, although the
+operating system page cache may still be warm. The single indexed lookup is a
+correctness and planner-path measurement, not a statistically stable latency
+claim.
 
 Results are diagnostic, not a published performance claim. Compiler, hardware,
 filesystem, power state, row count, and cache state all affect them; compare

@@ -45,7 +45,9 @@ def validate_report(report: dict) -> None:
     expected = {
         "rows": ROW_COUNT,
         "matched_rows": 100,
+        "indexed_rows": 1,
         "selected_id_checksum": 9900,
+        "indexed_id_checksum": 100,
     }
     for field, value in expected.items():
         if report.get(field) != value:
@@ -55,8 +57,12 @@ def validate_report(report: dict) -> None:
     validate_throughput(report, "insert_microseconds", "insert_rows_per_second")
     validate_throughput(report, "select_microseconds", "select_input_rows_per_second")
     validate_throughput(
+        report, "index_build_microseconds", "index_build_rows_per_second"
+    )
+    validate_throughput(
         report, "reopen_scan_microseconds", "reopen_scan_rows_per_second"
     )
+    require_integer(report, "reopen_index_lookup_microseconds", minimum=1)
 
 
 def require_rejected(command: list[str], message: str) -> None:
