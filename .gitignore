@@ -1,3 +1,4 @@
 build/
+benchmark-artifacts/
 *.db
 .DS_Store

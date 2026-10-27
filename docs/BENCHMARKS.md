@@ -8,9 +8,10 @@ cannot be reported as a successful timing.
 
 ```bash
 make benchmark
-make benchmark-environment > environment.json
-./build/pageforge_bench benchmark.db 1000
-rm benchmark.db
+mkdir -p benchmark-artifacts
+make benchmark-environment > benchmark-artifacts/environment.json
+./build/pageforge_bench benchmark-artifacts/benchmark.db 1000 \
+  | tee benchmark-artifacts/benchmark.json
 ```
 
 The database path must not already exist and the row count must be from 1 to
@@ -22,7 +23,9 @@ best-effort CPU model, logical CPU count, compiler, build flags, Git revision,
 and whether the working tree is clean. Review it before sharing because build
 flags can contain local paths. CPU discovery can fall back to the processor or
 architecture name; the report is context for a local measurement, not proof
-that results transfer to comparable hardware.
+that results transfer to comparable hardware. Generated databases and reports
+live in the ignored `benchmark-artifacts/` directory so creating the redirected
+sidecar does not change its own cleanliness result.
 
 The JSON fields are:
 
