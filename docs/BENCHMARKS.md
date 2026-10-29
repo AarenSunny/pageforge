@@ -3,10 +3,12 @@
 `pageforge_bench` measures five end-to-end paths against a newly created
 database: durable typed-row insertion, a catalog-bound SQL filter, integer
 index construction, a full table scan after closing and reopening the heap
-file, and an indexed equality query from a second reopen. It verifies that the
-planner selects the persisted index and validates row contents, counts, and ID
-checksums before emitting one JSON object, so corrupt or incomplete work cannot
-be reported as a successful timing.
+file, and nine indexed equality queries from a second reopen. The lookup keys
+are deterministic and evenly spaced across the inserted ID range. The harness
+verifies that the planner selects the persisted index for every sample and
+validates row contents, counts, and ID checksums before emitting one JSON
+object, so corrupt or incomplete work cannot be reported as a successful
+timing.
 
 ```bash
 make benchmark
@@ -35,20 +37,24 @@ The JSON fields are:
 | --- | --- |
 | `rows` | Rows inserted and scanned after reopen |
 | `matched_rows` | Even-ID rows returned by the SQL predicate |
-| `indexed_rows` | Rows returned by the reopened equality lookup |
+| `indexed_rows` | Rows returned across the reopened equality samples |
 | `*_microseconds` | Wall-clock duration for the named phase |
 | `*_rows_per_second` | Derived throughput using input rows for that phase |
+| `index_lookup_iterations` | Number of reopened equality-query samples |
+| `reopen_index_lookup_samples_microseconds` | Raw end-to-end lookup durations |
+| `reopen_index_lookup_microseconds` | Median end-to-end lookup duration |
+| `reopen_index_lookups_per_second` | Lookup rate derived from the median |
 | `database_bytes` | Final heap-file size |
 | `selected_id_checksum` | Sum of IDs returned by the SQL filter |
-| `indexed_id_checksum` | Sum of IDs returned by the reopened index lookup |
+| `indexed_id_checksum` | Sum of IDs returned by the reopened index lookups |
 
 Insertion and index-build timings include their final buffer-pool flushes but
 exclude database and catalog creation. SQL selection runs before close and may
-benefit from the buffer pool. The reopen scan and reopened index lookup each
+benefit from the buffer pool. The reopen scan and lookup sample set each
 construct a new heap, buffer pool, catalog, and table store, although the
-operating system page cache may still be warm. The single indexed lookup is a
-correctness and planner-path measurement, not a statistically stable latency
-claim.
+operating system page cache may still be warm. Raw lookup samples and their
+median reduce sensitivity to one timing outlier, but nine sequential queries
+are not a latency distribution or a concurrent-service benchmark.
 
 Results are diagnostic, not a published performance claim. Compiler, hardware,
 filesystem, power state, row count, and cache state all affect them; compare

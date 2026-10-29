@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <charconv>
 #include <chrono>
 #include <cstddef>
@@ -9,12 +10,14 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "pageforge/sql_executor.hpp"
 
 namespace {
 
 using Clock = std::chrono::steady_clock;
+constexpr std::size_t kIndexLookupIterations = 9;
 
 std::size_t parse_rows(std::string_view input) {
   std::size_t rows = 0;
@@ -36,6 +39,20 @@ double rows_per_second(std::size_t rows, std::int64_t microseconds) {
   return static_cast<double>(rows) * 1'000'000.0 / duration;
 }
 
+std::int64_t median_microseconds(std::vector<std::int64_t> samples) {
+  std::sort(samples.begin(), samples.end());
+  return samples[samples.size() / 2];
+}
+
+void print_samples(const std::vector<std::int64_t>& samples) {
+  std::cout << '[';
+  for (std::size_t index = 0; index < samples.size(); ++index) {
+    if (index > 0) std::cout << ',';
+    std::cout << samples[index];
+  }
+  std::cout << ']';
+}
+
 struct Metrics {
   std::size_t rows = 0;
   std::size_t matched_rows = 0;
@@ -45,6 +62,7 @@ struct Metrics {
   std::int64_t index_build_microseconds = 0;
   std::int64_t reopen_scan_microseconds = 0;
   std::int64_t reopen_index_lookup_microseconds = 0;
+  std::vector<std::int64_t> reopen_index_lookup_samples_microseconds;
   std::uintmax_t database_bytes = 0;
   std::uint64_t checksum = 0;
   std::uint64_t indexed_id_checksum = 0;
@@ -127,29 +145,36 @@ Metrics benchmark(const std::filesystem::path& path, std::size_t row_count) {
     pageforge::RecordStore records(pool);
     pageforge::Catalog catalog(records);
     pageforge::TableStore tables(records, catalog);
-    const auto lookup_key = static_cast<std::int64_t>(row_count / 2);
-    const auto lookup_start = Clock::now();
-    auto selected = pageforge::execute_select_sql(
-        tables, catalog,
-        "SELECT id, payload FROM benchmark_rows WHERE id = " + std::to_string(lookup_key));
-    if (selected.access_path() != pageforge::SelectAccessPath::IndexLookup ||
-        selected.index_name() != std::optional<std::string>{"benchmark_rows_id_idx"}) {
-      throw std::runtime_error("reopened equality query did not select the persisted index");
-    }
-    while (auto row = selected.next()) {
-      ++metrics.indexed_rows;
-      const auto id = std::get<std::int64_t>(row->values[0]);
-      const auto& payload = std::get<std::string>(row->values[1]);
-      if (id != lookup_key || payload != "row-" + std::to_string(lookup_key)) {
-        throw std::runtime_error("reopened index lookup returned the wrong row");
+    metrics.reopen_index_lookup_samples_microseconds.reserve(kIndexLookupIterations);
+    for (std::size_t iteration = 0; iteration < kIndexLookupIterations; ++iteration) {
+      const auto lookup_key = static_cast<std::int64_t>(
+          iteration * (row_count - 1) / (kIndexLookupIterations - 1));
+      const auto rows_before = metrics.indexed_rows;
+      const auto lookup_start = Clock::now();
+      auto selected = pageforge::execute_select_sql(
+          tables, catalog,
+          "SELECT id, payload FROM benchmark_rows WHERE id = " + std::to_string(lookup_key));
+      if (selected.access_path() != pageforge::SelectAccessPath::IndexLookup ||
+          selected.index_name() != std::optional<std::string>{"benchmark_rows_id_idx"}) {
+        throw std::runtime_error("reopened equality query did not select the persisted index");
       }
-      metrics.indexed_id_checksum += static_cast<std::uint64_t>(id);
+      while (auto row = selected.next()) {
+        ++metrics.indexed_rows;
+        const auto id = std::get<std::int64_t>(row->values[0]);
+        const auto& payload = std::get<std::string>(row->values[1]);
+        if (id != lookup_key || payload != "row-" + std::to_string(lookup_key)) {
+          throw std::runtime_error("reopened index lookup returned the wrong row");
+        }
+        metrics.indexed_id_checksum += static_cast<std::uint64_t>(id);
+      }
+      metrics.reopen_index_lookup_samples_microseconds.push_back(
+          elapsed_microseconds(lookup_start));
+      if (metrics.indexed_rows != rows_before + 1) {
+        throw std::runtime_error("reopened index lookup did not reproduce the expected row");
+      }
     }
-    metrics.reopen_index_lookup_microseconds = elapsed_microseconds(lookup_start);
-    if (metrics.indexed_rows != 1 ||
-        metrics.indexed_id_checksum != static_cast<std::uint64_t>(lookup_key)) {
-      throw std::runtime_error("reopened index lookup did not reproduce the expected row");
-    }
+    metrics.reopen_index_lookup_microseconds =
+        median_microseconds(metrics.reopen_index_lookup_samples_microseconds);
   }
 
   metrics.database_bytes = std::filesystem::file_size(path);
@@ -164,6 +189,10 @@ void print(const Metrics& metrics) {
             << ",\"select_microseconds\":" << metrics.select_microseconds
             << ",\"index_build_microseconds\":" << metrics.index_build_microseconds
             << ",\"reopen_scan_microseconds\":" << metrics.reopen_scan_microseconds
+            << ",\"index_lookup_iterations\":" << kIndexLookupIterations
+            << ",\"reopen_index_lookup_samples_microseconds\":";
+  print_samples(metrics.reopen_index_lookup_samples_microseconds);
+  std::cout
             << ",\"reopen_index_lookup_microseconds\":"
             << metrics.reopen_index_lookup_microseconds
             << ",\"insert_rows_per_second\":"
@@ -174,6 +203,8 @@ void print(const Metrics& metrics) {
             << rows_per_second(metrics.rows, metrics.index_build_microseconds)
             << ",\"reopen_scan_rows_per_second\":"
             << rows_per_second(metrics.rows, metrics.reopen_scan_microseconds)
+            << ",\"reopen_index_lookups_per_second\":"
+            << rows_per_second(1, metrics.reopen_index_lookup_microseconds)
             << ",\"database_bytes\":" << metrics.database_bytes
             << ",\"selected_id_checksum\":" << metrics.checksum
             << ",\"indexed_id_checksum\":" << metrics.indexed_id_checksum << "}\n";

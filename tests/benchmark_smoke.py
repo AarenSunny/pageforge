@@ -3,6 +3,7 @@
 
 import json
 import math
+import statistics
 import subprocess
 import sys
 import tempfile
@@ -10,6 +11,7 @@ from pathlib import Path
 
 
 ROW_COUNT = 200
+INDEX_LOOKUP_ITERATIONS = 9
 
 
 def fail(message: str) -> None:
@@ -45,9 +47,13 @@ def validate_report(report: dict) -> None:
     expected = {
         "rows": ROW_COUNT,
         "matched_rows": 100,
-        "indexed_rows": 1,
+        "indexed_rows": INDEX_LOOKUP_ITERATIONS,
+        "index_lookup_iterations": INDEX_LOOKUP_ITERATIONS,
         "selected_id_checksum": 9900,
-        "indexed_id_checksum": 100,
+        "indexed_id_checksum": sum(
+            iteration * (ROW_COUNT - 1) // (INDEX_LOOKUP_ITERATIONS - 1)
+            for iteration in range(INDEX_LOOKUP_ITERATIONS)
+        ),
     }
     for field, value in expected.items():
         if report.get(field) != value:
@@ -62,7 +68,18 @@ def validate_report(report: dict) -> None:
     validate_throughput(
         report, "reopen_scan_microseconds", "reopen_scan_rows_per_second"
     )
-    require_integer(report, "reopen_index_lookup_microseconds", minimum=1)
+    samples = report.get("reopen_index_lookup_samples_microseconds")
+    if not isinstance(samples, list) or len(samples) != expected["index_lookup_iterations"]:
+        fail("reopen_index_lookup_samples_microseconds does not match the iteration count")
+    for sample in samples:
+        if isinstance(sample, bool) or not isinstance(sample, int) or sample < 1:
+            fail("reopen_index_lookup_samples_microseconds contains an invalid duration")
+    lookup_median = require_integer(report, "reopen_index_lookup_microseconds", minimum=1)
+    if lookup_median != statistics.median(samples):
+        fail("reopen_index_lookup_microseconds does not match the raw samples")
+    lookup_rate = require_number(report, "reopen_index_lookups_per_second")
+    if not math.isclose(lookup_rate, 1_000_000.0 / lookup_median, abs_tol=0.011):
+        fail("reopen_index_lookups_per_second does not match the median duration")
 
 
 def require_rejected(command: list[str], message: str) -> None:
