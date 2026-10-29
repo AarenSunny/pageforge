@@ -60,6 +60,25 @@ std::string text(const std::vector<std::byte>& value) {
   return {reinterpret_cast<const char*>(value.data()), value.size()};
 }
 
+void write_u32(SlottedPage::Bytes& output, std::size_t offset, std::uint32_t value) {
+  for (std::size_t index = 0; index < 4; ++index) {
+    output[offset + index] = static_cast<std::byte>((value >> (index * 8U)) & 0xffU);
+  }
+}
+
+void refresh_page_checksum(SlottedPage::Bytes& page) {
+  constexpr std::size_t checksum_offset = 20;
+  std::uint32_t hash = 2166136261U;
+  for (std::size_t index = 0; index < page.size(); ++index) {
+    const unsigned value = index >= checksum_offset && index < checksum_offset + 4
+                               ? 0U
+                               : std::to_integer<unsigned>(page[index]);
+    hash ^= value;
+    hash *= 16777619U;
+  }
+  write_u32(page, checksum_offset, hash);
+}
+
 void check(bool condition, std::string_view message) {
   if (!condition) throw std::runtime_error(std::string(message));
 }
@@ -132,6 +151,30 @@ void page_capacity_and_corruption() {
   corrupted[4000] ^= std::byte{0x01};
   check_throws<PageCorruption>([&] { SlottedPage::from_bytes(corrupted); }, "checksum should detect bit flips");
   check_throws<std::invalid_argument>([&] { page.insert({}); }, "empty records should be rejected");
+}
+
+void page_rejects_invalid_format_metadata() {
+  auto page = SlottedPage::initialize(3);
+  (void)page.insert(bytes("row"));
+
+  auto unknown_flags = page.bytes();
+  unknown_flags[24 + 4] = std::byte{0x02};
+  refresh_page_checksum(unknown_flags);
+  check_throws<PageCorruption>([&] { (void)SlottedPage::from_bytes(unknown_flags); },
+                               "validly checksummed unknown slot flags should be rejected");
+
+  auto malformed_tombstone = page.bytes();
+  malformed_tombstone[24 + 4] = std::byte{0};
+  malformed_tombstone[24 + 5] = std::byte{0};
+  refresh_page_checksum(malformed_tombstone);
+  check_throws<PageCorruption>([&] { (void)SlottedPage::from_bytes(malformed_tombstone); },
+                               "tombstones should not retain live-record offsets and lengths");
+
+  auto reserved_header = page.bytes();
+  reserved_header[6] = std::byte{0x01};
+  refresh_page_checksum(reserved_header);
+  check_throws<PageCorruption>([&] { (void)SlottedPage::from_bytes(reserved_header); },
+                               "validly checksummed reserved header fields should be rejected");
 }
 
 void heap_file_persists_pages() {
@@ -2028,6 +2071,7 @@ int main() {
       {"deletion, compaction, and slot reuse", deletion_compaction_and_slot_reuse},
       {"stable record replacement", replacement_preserves_slots_and_failure_atomicity},
       {"page capacity and corruption", page_capacity_and_corruption},
+      {"page format metadata validation", page_rejects_invalid_format_metadata},
       {"heap file persistence", heap_file_persists_pages},
       {"heap file corruption detection", heap_file_detects_page_corruption},
       {"heap header corruption detection", heap_file_detects_header_corruption},

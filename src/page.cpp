@@ -12,10 +12,12 @@ constexpr std::uint16_t kVersion = 1;
 constexpr std::uint16_t kLive = 1;
 constexpr std::size_t kMagicOffset = 0;
 constexpr std::size_t kVersionOffset = 4;
+constexpr std::size_t kHeaderFlagsOffset = 6;
 constexpr std::size_t kPageIdOffset = 8;
 constexpr std::size_t kSlotCountOffset = 12;
 constexpr std::size_t kFreeStartOffset = 14;
 constexpr std::size_t kFreeEndOffset = 16;
+constexpr std::size_t kHeaderReservedOffset = 18;
 constexpr std::size_t kChecksumOffset = 20;
 
 std::uint16_t read_u16(const SlottedPage::Bytes& bytes, std::size_t offset) {
@@ -239,6 +241,10 @@ void SlottedPage::validate() const {
   if (read_u32(bytes_, kMagicOffset) != kMagic) throw PageCorruption("invalid page magic");
   if (read_u16(bytes_, kVersionOffset) != kVersion) throw PageCorruption("unsupported page version");
   if (read_u32(bytes_, kChecksumOffset) != checksum(bytes_)) throw PageCorruption("page checksum mismatch");
+  if (read_u16(bytes_, kHeaderFlagsOffset) != 0 ||
+      read_u16(bytes_, kHeaderReservedOffset) != 0) {
+    throw PageCorruption("page header has nonzero reserved fields");
+  }
 
   const auto slots = slot_count();
   const auto free_start = read_u16(bytes_, kFreeStartOffset);
@@ -249,7 +255,15 @@ void SlottedPage::validate() const {
   std::array<bool, kPageSize> occupied{};
   for (SlotId slot_id = 0; slot_id < slots; ++slot_id) {
     const auto slot = read_slot(bytes_, slot_id);
-    if ((slot.flags & kLive) == 0) continue;
+    if (slot.flags != 0 && slot.flags != kLive) {
+      throw PageCorruption("slot has unsupported flags");
+    }
+    if (slot.flags == 0) {
+      if (slot.offset != 0 || slot.length != 0) {
+        throw PageCorruption("tombstoned slot has nonzero metadata");
+      }
+      continue;
+    }
     if (slot.length == 0 || slot.offset < free_end || static_cast<std::size_t>(slot.offset) + slot.length > kPageSize) {
       throw PageCorruption("slot points outside the record region");
     }

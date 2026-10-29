@@ -30,9 +30,11 @@ one contiguous free region, and record bytes growing backward from the end:
 | header | slots → |       free        | ← variable records     |
 ```
 
-The header stores magic, version, page ID, slot count, free-space bounds, and a
-checksum over the full page. Each six-byte slot contains a record offset, record
-length, and flags. All integers use little-endian encoding.
+The header stores magic, version, zeroed format-v1 flags, page ID, slot count,
+free-space bounds, a zeroed reserved field, and a checksum over the full page.
+Each six-byte slot contains a record offset, record length, and flags. A
+format-v1 slot is either live (`flags = 1`) or a canonical tombstone whose three
+fields are all zero. All integers use little-endian encoding.
 
 Deletes tombstone a slot without moving other records. Insertion reuses a
 tombstone and compacts payload bytes only when contiguous space is insufficient.
@@ -46,6 +48,8 @@ leaf records and their `(page, slot)` links.
 Decoding verifies:
 
 - page magic, version, and full-page checksum;
+- format-v1 header fields and slot flags contain no unsupported values;
+- tombstoned slots retain no offset or length that could hide discarded data;
 - exact slot-directory and free-space boundaries;
 - live records stay inside the payload region;
 - record payloads do not overlap;
