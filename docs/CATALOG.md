@@ -72,11 +72,13 @@ name, but system and user records still share physical heap pages. Dedicated
 table storage will remove this temporary shared namespace.
 
 Catalog creation becomes durable at the buffer pool's explicit `flush_all()`
-boundary. Index registration records ownership but does not backfill existing
-rows; callers must populate the tree before registration. `TableStore` maintains
-registered indexes for subsequent inserts and deletes, and the SQL binder uses
-them for exact integer equality predicates. Range planning is not implemented
-yet. Schema alteration, table or index deletion, transactional DDL, and
-concurrent catalog access are also not implemented. `schema_version` is
-persisted now so future schema operations can identify the row layout they are
-changing.
+boundary. Low-level index registration records ownership but does not backfill
+existing rows; callers using it directly must populate the tree before
+registration. `TableStore::create_index` performs that backfill before it
+registers the index, then maintains registered indexes for subsequent inserts
+and deletes. The SQL planner selects them for exact integer equality and
+compatible range predicates, including order-aware forward and reverse scans.
+
+Schema alteration, table or index deletion, transactional DDL, and concurrent
+catalog access are not implemented. `schema_version` is persisted now so future
+schema operations can identify the row layout they are changing.

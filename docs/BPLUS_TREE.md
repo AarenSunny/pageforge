@@ -64,9 +64,11 @@ accidental on-disk bit flips.
 This milestone supports heights one and two. The fixed internal root can route
 up to 128 leaves; an insertion that would require a height-three tree fails
 before changing the full leaf. Recursive internal splits, minimum-occupancy
-merging/redistribution, catalog ownership, SQL planner selection, and uniqueness
-constraints remain next steps. The caller must retain the header record ID
-until catalog metadata owns it.
+merging/redistribution, and uniqueness constraints remain next steps.
+`BPlusTreeIndex` itself remains independent of metadata: direct callers must
+retain its header record ID, while `TableStore::create_index` backfills the tree
+and persists that ownership in the catalog. The SQL planner can then select the
+index for compatible integer equality, range, ordering, and limit operations.
 
 Splits, deletion, and root promotion/collapse are not crash-atomic without the
 planned write-ahead log. A crash between their record rewrites may leave an
