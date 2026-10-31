@@ -108,8 +108,8 @@ safety.
 
 - Built a C++20 relational database engine with checksummed slotted pages,
   clock-sweep buffering, typed catalogs and tuples, streaming SQL operators,
-  and persistent B+ tree indexes; verified by 49 unit tests plus CLI and
-  benchmark integration checks.
+  and persistent B+ tree indexes; verified by unit, CLI, demo, and benchmark
+  integration checks.
 - Added query-plan introspection and existing-row index construction, then
   optimized append-heavy record placement from 784 ms to a 70 ms median for a
   controlled 1,000-row workload while preserving wraparound free-space reuse.
