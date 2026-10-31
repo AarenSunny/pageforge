@@ -66,17 +66,24 @@ void write_u32(SlottedPage::Bytes& output, std::size_t offset, std::uint32_t val
   }
 }
 
-void refresh_page_checksum(SlottedPage::Bytes& page) {
-  constexpr std::size_t checksum_offset = 20;
+void refresh_checksum(SlottedPage::Bytes& block, std::size_t checksum_offset) {
   std::uint32_t hash = 2166136261U;
-  for (std::size_t index = 0; index < page.size(); ++index) {
+  for (std::size_t index = 0; index < block.size(); ++index) {
     const unsigned value = index >= checksum_offset && index < checksum_offset + 4
                                ? 0U
-                               : std::to_integer<unsigned>(page[index]);
+                               : std::to_integer<unsigned>(block[index]);
     hash ^= value;
     hash *= 16777619U;
   }
-  write_u32(page, checksum_offset, hash);
+  write_u32(block, checksum_offset, hash);
+}
+
+void refresh_page_checksum(SlottedPage::Bytes& page) {
+  refresh_checksum(page, 20);
+}
+
+void refresh_heap_header_checksum(SlottedPage::Bytes& header) {
+  refresh_checksum(header, 16);
 }
 
 void check(bool condition, std::string_view message) {
@@ -238,6 +245,27 @@ void heap_file_detects_header_corruption() {
     file.write(&byte, 1);
   }
   check_throws<PageCorruption>([&] { (void)HeapFile::open(path); }, "corrupt heap header should be rejected");
+  std::filesystem::remove(path);
+}
+
+void heap_file_rejects_unknown_header_fields() {
+  const auto path = std::filesystem::temp_directory_path() / "pageforge-header-reserved-test.db";
+  std::filesystem::remove(path);
+  { auto heap = HeapFile::create(path); }
+  {
+    SlottedPage::Bytes header{};
+    std::fstream file(path, std::ios::binary | std::ios::in | std::ios::out);
+    file.read(reinterpret_cast<char*>(header.data()), header.size());
+    check(static_cast<std::size_t>(file.gcount()) == header.size(),
+          "test setup should read the complete heap header");
+    header[20] = std::byte{0x01};
+    refresh_heap_header_checksum(header);
+    file.seekp(0);
+    file.write(reinterpret_cast<const char*>(header.data()), header.size());
+    check(static_cast<bool>(file), "test setup should write the modified heap header");
+  }
+  check_throws<PageCorruption>([&] { (void)HeapFile::open(path); },
+                               "validly checksummed reserved heap fields should be rejected");
   std::filesystem::remove(path);
 }
 
@@ -2075,6 +2103,7 @@ int main() {
       {"heap file persistence", heap_file_persists_pages},
       {"heap file corruption detection", heap_file_detects_page_corruption},
       {"heap header corruption detection", heap_file_detects_header_corruption},
+      {"heap header reserved-field validation", heap_file_rejects_unknown_header_fields},
       {"heap truncation detection", heap_file_detects_truncation},
       {"buffer pool cache hits", buffer_pool_caches_page_hits},
       {"buffer pool dirty eviction", buffer_pool_writes_dirty_victims},

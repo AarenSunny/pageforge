@@ -18,7 +18,8 @@ The first 4 KiB block is the heap header:
 
 Data page `n` starts at byte `4096 × (n + 1)`. The header checksum covers the
 entire block with the checksum field treated as zero. Opening a truncated file,
-unknown format, incompatible page size, or damaged header fails immediately.
+unknown format, incompatible page size, nonzero reserved header fields, or a
+damaged header fails immediately.
 
 ## Slotted data page
 

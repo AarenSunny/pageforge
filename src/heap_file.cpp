@@ -1,7 +1,7 @@
 #include "pageforge/heap_file.hpp"
 
+#include <algorithm>
 #include <array>
-#include <cstring>
 #include <stdexcept>
 
 namespace pageforge {
@@ -117,6 +117,10 @@ void HeapFile::read_header() {
   }
   if (read_u32(header, kPageSizeOffset) != kPageSize) throw PageCorruption("incompatible heap page size");
   if (read_u32(header, kChecksumOffset) != checksum(header)) throw PageCorruption("heap header checksum mismatch");
+  if (std::any_of(header.begin() + kChecksumOffset + 4, header.end(),
+                  [](std::byte value) { return value != std::byte{0}; })) {
+    throw PageCorruption("heap header has nonzero reserved fields");
+  }
   page_count_ = read_u32(header, kPageCountOffset);
 
   const auto expected_size = static_cast<std::uintmax_t>(page_offset(page_count_));
