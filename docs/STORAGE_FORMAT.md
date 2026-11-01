@@ -21,7 +21,9 @@ entire block with the checksum field treated as zero. The file length must equal
 the header plus the declared number of data pages; truncated files and
 undeclared trailing data both fail closed. Unknown formats, incompatible page
 sizes, nonzero reserved header fields, and damaged headers also fail
-immediately.
+immediately. Files shorter than the complete header are classified as
+`PageCorruption`, consistent with other invalid on-disk structures, rather than
+surfacing as generic stream failures.
 
 ## Slotted data page
 

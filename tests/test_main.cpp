@@ -248,6 +248,18 @@ void heap_file_detects_header_corruption() {
   std::filesystem::remove(path);
 }
 
+void heap_file_rejects_truncated_header() {
+  const auto path = std::filesystem::temp_directory_path() / "pageforge-short-header-test.db";
+  std::filesystem::remove(path);
+  { auto heap = HeapFile::create(path); }
+  for (const auto size : std::array<std::uintmax_t, 3>{pageforge::kPageSize - 1, 1, 0}) {
+    std::filesystem::resize_file(path, size);
+    check_throws<PageCorruption>([&] { (void)HeapFile::open(path); },
+                                 "truncated heap headers should be reported as page corruption");
+  }
+  std::filesystem::remove(path);
+}
+
 void heap_file_rejects_unknown_header_fields() {
   const auto path = std::filesystem::temp_directory_path() / "pageforge-header-reserved-test.db";
   std::filesystem::remove(path);
@@ -2108,6 +2120,7 @@ int main() {
       {"heap file persistence", heap_file_persists_pages},
       {"heap file corruption detection", heap_file_detects_page_corruption},
       {"heap header corruption detection", heap_file_detects_header_corruption},
+      {"heap truncated-header detection", heap_file_rejects_truncated_header},
       {"heap header reserved-field validation", heap_file_rejects_unknown_header_fields},
       {"heap length validation", heap_file_detects_length_mismatch},
       {"buffer pool cache hits", buffer_pool_caches_page_hits},

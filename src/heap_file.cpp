@@ -109,6 +109,9 @@ void HeapFile::read_header() {
   Header header{};
   stream_.seekg(0);
   stream_.read(reinterpret_cast<char*>(header.data()), header.size());
+  if (stream_.gcount() != static_cast<std::streamsize>(header.size())) {
+    throw PageCorruption("heap file is truncated before the complete header");
+  }
   require_stream(stream_, "could not read heap header");
   for (std::size_t index = 0; index < kMagic.size(); ++index) {
     if (std::to_integer<unsigned char>(header[index]) != static_cast<unsigned char>(kMagic[index])) {
