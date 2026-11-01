@@ -269,14 +269,19 @@ void heap_file_rejects_unknown_header_fields() {
   std::filesystem::remove(path);
 }
 
-void heap_file_detects_truncation() {
-  const auto path = std::filesystem::temp_directory_path() / "pageforge-truncation-test.db";
+void heap_file_detects_length_mismatch() {
+  const auto path = std::filesystem::temp_directory_path() / "pageforge-length-test.db";
   std::filesystem::remove(path);
   {
     auto heap = HeapFile::create(path);
     heap.allocate_page();
     heap.sync();
   }
+  const auto expected_size = pageforge::kPageSize * 2;
+  std::filesystem::resize_file(path, expected_size + 1);
+  check_throws<PageCorruption>([&] { (void)HeapFile::open(path); },
+                               "heap with undeclared trailing data should be rejected");
+  std::filesystem::resize_file(path, expected_size);
   std::filesystem::resize_file(path, pageforge::kPageSize + 100);
   check_throws<PageCorruption>([&] { (void)HeapFile::open(path); }, "truncated heap should be rejected");
   std::filesystem::remove(path);
@@ -2104,7 +2109,7 @@ int main() {
       {"heap file corruption detection", heap_file_detects_page_corruption},
       {"heap header corruption detection", heap_file_detects_header_corruption},
       {"heap header reserved-field validation", heap_file_rejects_unknown_header_fields},
-      {"heap truncation detection", heap_file_detects_truncation},
+      {"heap length validation", heap_file_detects_length_mismatch},
       {"buffer pool cache hits", buffer_pool_caches_page_hits},
       {"buffer pool dirty eviction", buffer_pool_writes_dirty_victims},
       {"buffer pool pin safety", buffer_pool_respects_pins},

@@ -124,7 +124,9 @@ void HeapFile::read_header() {
   page_count_ = read_u32(header, kPageCountOffset);
 
   const auto expected_size = static_cast<std::uintmax_t>(page_offset(page_count_));
-  if (std::filesystem::file_size(path_) < expected_size) throw PageCorruption("heap file is truncated");
+  const auto actual_size = std::filesystem::file_size(path_);
+  if (actual_size < expected_size) throw PageCorruption("heap file is truncated");
+  if (actual_size > expected_size) throw PageCorruption("heap file has undeclared trailing data");
 }
 
 void HeapFile::write_header() {
