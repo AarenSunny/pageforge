@@ -10,6 +10,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "pageforge/sql_executor.hpp"
@@ -44,6 +45,16 @@ std::int64_t median_microseconds(std::vector<std::int64_t> samples) {
   return samples[samples.size() / 2];
 }
 
+std::int64_t median_absolute_deviation_microseconds(
+    const std::vector<std::int64_t>& samples, std::int64_t median) {
+  std::vector<std::int64_t> deviations;
+  deviations.reserve(samples.size());
+  for (const auto sample : samples) {
+    deviations.push_back(sample >= median ? sample - median : median - sample);
+  }
+  return median_microseconds(std::move(deviations));
+}
+
 void print_samples(const std::vector<std::int64_t>& samples) {
   std::cout << '[';
   for (std::size_t index = 0; index < samples.size(); ++index) {
@@ -62,6 +73,7 @@ struct Metrics {
   std::int64_t index_build_microseconds = 0;
   std::int64_t reopen_scan_microseconds = 0;
   std::int64_t reopen_index_lookup_microseconds = 0;
+  std::int64_t reopen_index_lookup_mad_microseconds = 0;
   std::vector<std::int64_t> reopen_index_lookup_samples_microseconds;
   std::uintmax_t database_bytes = 0;
   std::uint64_t checksum = 0;
@@ -175,6 +187,9 @@ Metrics benchmark(const std::filesystem::path& path, std::size_t row_count) {
     }
     metrics.reopen_index_lookup_microseconds =
         median_microseconds(metrics.reopen_index_lookup_samples_microseconds);
+    metrics.reopen_index_lookup_mad_microseconds = median_absolute_deviation_microseconds(
+        metrics.reopen_index_lookup_samples_microseconds,
+        metrics.reopen_index_lookup_microseconds);
   }
 
   metrics.database_bytes = std::filesystem::file_size(path);
@@ -195,6 +210,8 @@ void print(const Metrics& metrics) {
   std::cout
             << ",\"reopen_index_lookup_microseconds\":"
             << metrics.reopen_index_lookup_microseconds
+            << ",\"reopen_index_lookup_mad_microseconds\":"
+            << metrics.reopen_index_lookup_mad_microseconds
             << ",\"insert_rows_per_second\":"
             << rows_per_second(metrics.rows, metrics.insert_microseconds)
             << ",\"select_input_rows_per_second\":"

@@ -43,6 +43,7 @@ The JSON fields are:
 | `index_lookup_iterations` | Number of reopened equality-query samples |
 | `reopen_index_lookup_samples_microseconds` | Raw end-to-end lookup durations |
 | `reopen_index_lookup_microseconds` | Median end-to-end lookup duration |
+| `reopen_index_lookup_mad_microseconds` | Median absolute deviation of lookup durations |
 | `reopen_index_lookups_per_second` | Lookup rate derived from the median |
 | `database_bytes` | Final heap-file size |
 | `selected_id_checksum` | Sum of IDs returned by the SQL filter |
@@ -53,8 +54,10 @@ exclude database and catalog creation. SQL selection runs before close and may
 benefit from the buffer pool. The reopen scan and lookup sample set each
 construct a new heap, buffer pool, catalog, and table store, although the
 operating system page cache may still be warm. Raw lookup samples and their
-median reduce sensitivity to one timing outlier, but nine sequential queries
-are not a latency distribution or a concurrent-service benchmark.
+median reduce sensitivity to one timing outlier. Their median absolute
+deviation (MAD) makes within-run variability visible, but it is not a confidence
+interval. Nine sequential queries are not a latency distribution or a
+concurrent-service benchmark.
 
 Results are diagnostic, not a published performance claim. Compiler, hardware,
 filesystem, power state, row count, and cache state all affect them; compare

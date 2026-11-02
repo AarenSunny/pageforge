@@ -77,6 +77,14 @@ def validate_report(report: dict) -> None:
     lookup_median = require_integer(report, "reopen_index_lookup_microseconds", minimum=1)
     if lookup_median != statistics.median(samples):
         fail("reopen_index_lookup_microseconds does not match the raw samples")
+    lookup_mad = require_integer(
+        report, "reopen_index_lookup_mad_microseconds", minimum=0
+    )
+    expected_mad = statistics.median(
+        abs(sample - lookup_median) for sample in samples
+    )
+    if lookup_mad != expected_mad:
+        fail("reopen_index_lookup_mad_microseconds does not match the raw samples")
     lookup_rate = require_number(report, "reopen_index_lookups_per_second")
     if not math.isclose(lookup_rate, 1_000_000.0 / lookup_median, abs_tol=0.011):
         fail("reopen_index_lookups_per_second does not match the median duration")
