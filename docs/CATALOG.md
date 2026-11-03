@@ -74,10 +74,13 @@ table storage will remove this temporary shared namespace.
 Catalog creation becomes durable at the buffer pool's explicit `flush_all()`
 boundary. Low-level index registration records ownership but does not backfill
 existing rows; callers using it directly must populate the tree before
-registration. `TableStore::create_index` performs that backfill before it
-registers the index, then maintains registered indexes for subsequent inserts
-and deletes. The SQL planner selects them for exact integer equality and
-compatible range predicates, including order-aware forward and reverse scans.
+registration. Each B+ tree header may belong to exactly one catalog index;
+registration rejects aliases, and catalog reads classify persisted shared-tree
+ownership as corruption before table writes can double-apply an entry.
+`TableStore::create_index` performs backfill before it registers the index, then
+maintains registered indexes for subsequent inserts and deletes. The SQL
+planner selects them for exact integer equality and compatible range
+predicates, including order-aware forward and reverse scans.
 
 Schema alteration, table or index deletion, transactional DDL, and concurrent
 catalog access are not implemented. `schema_version` is persisted now so future

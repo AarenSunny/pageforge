@@ -145,6 +145,10 @@ bool has_magic(std::span<const std::byte> bytes, std::span<const std::byte> magi
   return bytes.size() >= magic.size() && std::equal(magic.begin(), magic.end(), bytes.begin());
 }
 
+std::uint64_t record_key(RecordId id) {
+  return (static_cast<std::uint64_t>(id.page_id) << 16U) | id.slot_id;
+}
+
 TableDefinition decode(std::span<const std::byte> bytes) {
   std::size_t offset = kTableMagic.size();
   if (read_u16(bytes, offset) != kFormatVersion) throw CatalogCorruption("unsupported catalog format version");
@@ -251,7 +255,12 @@ std::vector<TableDefinition> Catalog::list_tables() {
 
 RecordId Catalog::register_index(const IndexDefinition& index) {
   validate_index_identifiers(index);
-  if (find_index(index.name)) throw std::invalid_argument("index already exists");
+  for (const auto& existing : list_indexes()) {
+    if (existing.name == index.name) throw std::invalid_argument("index already exists");
+    if (existing.header_id == index.header_id) {
+      throw std::invalid_argument("index tree is already registered");
+    }
+  }
   const auto table = find_table(index.table);
   if (!table) throw std::invalid_argument("index table does not exist");
   const auto column = std::find_if(table->schema.begin(), table->schema.end(), [&](const auto& candidate) {
@@ -268,11 +277,15 @@ RecordId Catalog::register_index(const IndexDefinition& index) {
 std::optional<IndexDefinition> Catalog::find_index(std::string_view name) {
   std::optional<IndexDefinition> found;
   std::unordered_set<std::string> names;
+  std::unordered_set<std::uint64_t> header_ids;
   auto cursor = records_.cursor();
   while (auto record = cursor.next()) {
     if (!has_magic(record->bytes, kIndexMagic)) continue;
     auto index = decode_index(record->bytes);
     if (!names.insert(index.name).second) throw CatalogCorruption("catalog contains duplicate index names");
+    if (!header_ids.insert(record_key(index.header_id)).second) {
+      throw CatalogCorruption("catalog contains shared index tree ownership");
+    }
     if (index.name == name) found = std::move(index);
   }
   return found;
@@ -281,11 +294,15 @@ std::optional<IndexDefinition> Catalog::find_index(std::string_view name) {
 std::vector<IndexDefinition> Catalog::list_indexes() {
   std::vector<IndexDefinition> indexes;
   std::unordered_set<std::string> names;
+  std::unordered_set<std::uint64_t> header_ids;
   auto cursor = records_.cursor();
   while (auto record = cursor.next()) {
     if (!has_magic(record->bytes, kIndexMagic)) continue;
     auto index = decode_index(record->bytes);
     if (!names.insert(index.name).second) throw CatalogCorruption("catalog contains duplicate index names");
+    if (!header_ids.insert(record_key(index.header_id)).second) {
+      throw CatalogCorruption("catalog contains shared index tree ownership");
+    }
     indexes.push_back(std::move(index));
   }
   return indexes;

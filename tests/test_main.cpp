@@ -799,6 +799,41 @@ void catalog_validates_index_definitions() {
   std::filesystem::remove(truncated_path);
 }
 
+void catalog_rejects_shared_index_tree_ownership() {
+  const auto path =
+      std::filesystem::temp_directory_path() / "pageforge-index-catalog-ownership-test.db";
+  std::filesystem::remove(path);
+  {
+    auto heap = HeapFile::create(path);
+    BufferPool pool(heap, 3);
+    RecordStore records(pool);
+    Catalog catalog(records);
+    (void)catalog.create_table({"people", people_schema(), 1});
+    auto index = BPlusTreeIndex::create(records);
+    const IndexDefinition primary{"people_id_idx", "people", "id", index.header_id()};
+    const auto metadata_id = catalog.register_index(primary);
+
+    check_throws<std::invalid_argument>(
+        [&] {
+          (void)catalog.register_index(
+              {"people_id_alias", "people", "id", index.header_id()});
+        },
+        "one B+ tree should not be registered under multiple index names");
+
+    auto aliased_metadata = records.read(metadata_id);
+    constexpr std::size_t kEncodedIndexNameOffset = 18;
+    check(aliased_metadata.size() > kEncodedIndexNameOffset &&
+              aliased_metadata[kEncodedIndexNameOffset] == std::byte{'p'},
+          "test setup should locate the encoded index name");
+    aliased_metadata[kEncodedIndexNameOffset] = std::byte{'P'};
+    (void)records.insert(aliased_metadata);
+    check_throws<CatalogCorruption>(
+        [&] { (void)catalog.list_indexes(); },
+        "persisted index aliases should be classified as catalog corruption");
+  }
+  std::filesystem::remove(path);
+}
+
 void typed_tables_persist_and_isolate_rows() {
   const auto path = std::filesystem::temp_directory_path() / "pageforge-tables-test.db";
   std::filesystem::remove(path);
@@ -2141,6 +2176,7 @@ int main() {
       {"catalog corruption detection", catalog_detects_corrupt_metadata},
       {"catalog index ownership persistence", catalog_persists_index_ownership},
       {"catalog index definition validation", catalog_validates_index_definitions},
+      {"catalog index tree ownership", catalog_rejects_shared_index_tree_ownership},
       {"typed table persistence and isolation", typed_tables_persist_and_isolate_rows},
       {"typed table input and ownership validation", typed_tables_validate_input_and_ownership},
       {"typed table automatic index maintenance", typed_tables_maintain_registered_indexes},
