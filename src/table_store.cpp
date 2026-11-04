@@ -57,6 +57,18 @@ bool has_magic(std::span<const std::byte> bytes) {
   return bytes.size() >= kMagic.size() && std::equal(kMagic.begin(), kMagic.end(), bytes.begin());
 }
 
+char ascii_lower(char value) {
+  return value >= 'A' && value <= 'Z' ? static_cast<char>(value + ('a' - 'A')) : value;
+}
+
+bool equal_identifier(std::string_view left, std::string_view right) {
+  if (left.size() != right.size()) return false;
+  for (std::size_t index = 0; index < left.size(); ++index) {
+    if (ascii_lower(left[index]) != ascii_lower(right[index])) return false;
+  }
+  return true;
+}
+
 struct RowEnvelope {
   std::string table_name;
   std::uint32_t schema_version;
@@ -229,7 +241,11 @@ RecordId TableStore::create_index(std::string_view index_name, std::string_view 
   if (index_name.size() > std::numeric_limits<std::uint16_t>::max()) {
     throw std::invalid_argument("index name is too long");
   }
-  if (catalog_.find_index(index_name)) throw std::invalid_argument("index already exists");
+  for (const auto& existing : catalog_.list_indexes()) {
+    if (equal_identifier(existing.name, index_name)) {
+      throw std::invalid_argument("index already exists");
+    }
+  }
   const auto table = require_table(table_name);
   const auto column = std::find_if(table.schema.begin(), table.schema.end(), [&](const auto& candidate) {
     return candidate.name == column_name;

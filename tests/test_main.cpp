@@ -1059,9 +1059,15 @@ void typed_tables_build_indexes_for_existing_rows() {
     const auto limited = tables.lookup_index("items_score_idx", 7, 2);
     check(limited.size() == 2 && limited[0].id == first && limited[1].id == second,
           "limited point lookups should stop after the requested candidate count");
+    const auto record_count_before_rejection = records.scan().size();
     check_throws<std::invalid_argument>(
         [&] { (void)tables.create_index("items_score_idx", "items", "score"); },
         "building a duplicate index should fail before allocating another tree");
+    check_throws<std::invalid_argument>(
+        [&] { (void)tables.create_index("ITEMS_SCORE_IDX", "items", "score"); },
+        "building a case-insensitive duplicate index should fail before allocation");
+    check(records.scan().size() == record_count_before_rejection,
+          "rejected duplicate index builds should not leave unreachable tree records");
     check_throws<std::invalid_argument>(
         [&] { (void)tables.create_index("", "items", "score"); },
         "index builder should validate its name before allocating a tree");

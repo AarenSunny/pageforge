@@ -49,6 +49,8 @@ decoding reverse-key groups because the current leaves have no reverse links.
 non-null table rows before registering it in the catalog. Duplicate keys remain
 distinct because index entries include the record ID. Once registration
 succeeds, ordinary inserts and deletes maintain the new index automatically.
+Empty or oversized names, non-integer target columns, and
+ASCII-case-insensitive duplicate names are rejected before tree allocation.
 
 ## Row envelope
 
