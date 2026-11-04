@@ -972,6 +972,43 @@ void typed_tables_maintain_registered_indexes() {
   std::filesystem::remove(path);
 }
 
+void typed_tables_reject_missing_index_entries_on_delete() {
+  const auto path =
+      std::filesystem::temp_directory_path() / "pageforge-table-index-missing-entry-test.db";
+  std::filesystem::remove(path);
+  {
+    auto heap = HeapFile::create(path);
+    BufferPool pool(heap, 4);
+    RecordStore records(pool);
+    Catalog catalog(records);
+    (void)catalog.create_table({"items", {{"id", pageforge::DataType::Integer, false},
+                                           {"score", pageforge::DataType::Integer, false}},
+                                1});
+    auto id_index = BPlusTreeIndex::create(records);
+    auto score_index = BPlusTreeIndex::create(records);
+    (void)catalog.register_index({"items_id_idx", "items", "id", id_index.header_id()});
+    (void)catalog.register_index(
+        {"items_score_idx", "items", "score", score_index.header_id()});
+
+    TableStore tables(records, catalog);
+    const auto row_id = tables.insert("items", {std::int64_t{7}, std::int64_t{100}});
+    auto damaged_score_index = BPlusTreeIndex::open(records, score_index.header_id());
+    check(damaged_score_index.erase(100, row_id),
+          "test setup should remove the second owned index entry");
+
+    check_throws<TableCorruption>(
+        [&] { (void)tables.erase("items", row_id); },
+        "delete should reject a row missing from an owned index");
+    check(tables.read("items", row_id) ==
+              pageforge::Tuple{std::int64_t{7}, std::int64_t{100}},
+          "rejected delete should leave the table row intact");
+    auto restored_id_index = BPlusTreeIndex::open(records, id_index.header_id());
+    check(restored_id_index.find(7) == std::vector<RecordId>{row_id},
+          "rejected delete should restore entries removed from earlier indexes");
+  }
+  std::filesystem::remove(path);
+}
+
 void typed_tables_build_indexes_for_existing_rows() {
   const auto path = std::filesystem::temp_directory_path() / "pageforge-table-index-build-test.db";
   std::filesystem::remove(path);
@@ -2180,6 +2217,8 @@ int main() {
       {"typed table persistence and isolation", typed_tables_persist_and_isolate_rows},
       {"typed table input and ownership validation", typed_tables_validate_input_and_ownership},
       {"typed table automatic index maintenance", typed_tables_maintain_registered_indexes},
+      {"typed table missing index entry rejection",
+       typed_tables_reject_missing_index_entries_on_delete},
       {"typed table existing-row index build", typed_tables_build_indexes_for_existing_rows},
       {"typed table validated index ranges", typed_tables_read_validated_index_ranges},
       {"typed table index corruption safety", typed_tables_reject_corrupt_owned_indexes_before_writes},

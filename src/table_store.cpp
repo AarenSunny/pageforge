@@ -330,9 +330,11 @@ bool TableStore::erase(std::string_view table_name, RecordId id) {
   std::vector<std::size_t> removed;
   try {
     for (std::size_t index = 0; index < indexes.size(); ++index) {
-      if (indexes[index].key && indexes[index].tree.erase(*indexes[index].key, id)) {
-        removed.push_back(index);
+      if (!indexes[index].key) continue;
+      if (!indexes[index].tree.erase(*indexes[index].key, id)) {
+        throw TableCorruption("index is missing the table row");
       }
+      removed.push_back(index);
     }
     if (records_.erase(id)) return true;
   } catch (...) {
