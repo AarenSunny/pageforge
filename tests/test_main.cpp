@@ -657,9 +657,9 @@ void catalog_validates_definitions() {
         [&] {
           (void)catalog.create_table(
               {"duplicates", {{"id", pageforge::DataType::Integer, false},
-                               {"id", pageforge::DataType::Text, false}}, 1});
+                               {"ID", pageforge::DataType::Text, false}}, 1});
         },
-        "duplicate column names should fail");
+        "case-insensitive duplicate column names should fail");
     check_throws<std::invalid_argument>([&] { (void)catalog.create_table({"zero", people_schema(), 0}); },
                                         "zero schema version should fail");
     check_throws<std::invalid_argument>(
@@ -672,6 +672,10 @@ void catalog_validates_definitions() {
     (void)catalog.create_table(valid);
     check_throws<std::invalid_argument>([&] { (void)catalog.create_table(valid); },
                                         "duplicate table name should fail");
+    auto alias = valid;
+    alias.name = "People";
+    check_throws<std::invalid_argument>([&] { (void)catalog.create_table(alias); },
+                                        "case-insensitive duplicate table name should fail");
   }
   std::filesystem::remove(path);
 }
@@ -686,10 +690,15 @@ void catalog_detects_corrupt_metadata() {
     Catalog catalog(records);
     const pageforge::TableDefinition table{"people", people_schema(), 1};
     const auto id = catalog.create_table(table);
-    const auto encoded = records.read(id);
+    auto encoded = records.read(id);
+    constexpr std::size_t kEncodedTableNameOffset = 12;
+    check(encoded.size() > kEncodedTableNameOffset &&
+              encoded[kEncodedTableNameOffset] == std::byte{'p'},
+          "test setup should locate the encoded table name");
+    encoded[kEncodedTableNameOffset] = std::byte{'P'};
     (void)records.insert(encoded);
     check_throws<CatalogCorruption>([&] { (void)catalog.list_tables(); },
-                                    "duplicate persisted table names should be corruption");
+                                    "persisted case-insensitive table aliases should be corruption");
   }
   std::filesystem::remove(path);
 
@@ -778,9 +787,19 @@ void catalog_validates_index_definitions() {
     const auto metadata_id = catalog.register_index(valid);
     check_throws<std::invalid_argument>([&] { (void)catalog.register_index(valid); },
                                         "duplicate index names should fail");
-    (void)records.insert(records.read(metadata_id));
+    auto alias = valid;
+    alias.name = "People_ID_IDX";
+    check_throws<std::invalid_argument>([&] { (void)catalog.register_index(alias); },
+                                        "case-insensitive duplicate index names should fail");
+    auto encoded = records.read(metadata_id);
+    constexpr std::size_t kEncodedIndexNameOffset = 18;
+    check(encoded.size() > kEncodedIndexNameOffset &&
+              encoded[kEncodedIndexNameOffset] == std::byte{'p'},
+          "test setup should locate the encoded index name");
+    encoded[kEncodedIndexNameOffset] = std::byte{'P'};
+    (void)records.insert(encoded);
     check_throws<CatalogCorruption>([&] { (void)catalog.list_indexes(); },
-                                    "duplicate persisted index names should be corruption");
+                                    "persisted case-insensitive index aliases should be corruption");
   }
   std::filesystem::remove(path);
 
@@ -825,7 +844,7 @@ void catalog_rejects_shared_index_tree_ownership() {
     check(aliased_metadata.size() > kEncodedIndexNameOffset &&
               aliased_metadata[kEncodedIndexNameOffset] == std::byte{'p'},
           "test setup should locate the encoded index name");
-    aliased_metadata[kEncodedIndexNameOffset] = std::byte{'P'};
+    aliased_metadata[kEncodedIndexNameOffset] = std::byte{'x'};
     (void)records.insert(aliased_metadata);
     check_throws<CatalogCorruption>(
         [&] { (void)catalog.list_indexes(); },
@@ -1576,10 +1595,6 @@ void sql_execution_rejects_binding_errors() {
     RecordStore records(pool);
     Catalog catalog(records);
     (void)catalog.create_table({"people", people_schema(), 1});
-    (void)catalog.create_table({"Things", {{"id", pageforge::DataType::Integer, false}}, 1});
-    (void)catalog.create_table({"things", {{"id", pageforge::DataType::Integer, false}}, 1});
-    (void)catalog.create_table({"ambiguous", {{"Name", pageforge::DataType::Text, false},
-                                              {"name", pageforge::DataType::Text, false}}, 1});
     TableStore tables(records, catalog);
 
     const std::vector<std::string> invalid{
@@ -1590,9 +1605,7 @@ void sql_execution_rejects_binding_errors() {
         "SELECT * FROM people WHERE name = 7",
         "SELECT * FROM people WHERE active > TRUE",
         "SELECT * FROM people WHERE id >= 1 AND missing IS NULL",
-        "SELECT * FROM people ORDER BY missing",
-        "SELECT * FROM THINGS",
-        "SELECT NAME FROM ambiguous"};
+        "SELECT * FROM people ORDER BY missing"};
     for (const auto& sql : invalid) {
       check_throws<SqlBindError>([&] { (void)pageforge::execute_select_sql(tables, catalog, sql); },
                                  "invalid SQL names or types should fail during binding");

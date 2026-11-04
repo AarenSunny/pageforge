@@ -27,12 +27,13 @@ pool.flush_all();
 
 `find_table` and `list_tables` scan persisted records and reconstruct their
 schemas after the database is reopened. Creation rejects empty identifiers,
-empty schemas, duplicate column names, duplicate table names, unknown types,
-and schema version zero. `register_index` additionally requires an existing
-table and integer column, a unique index name, and a header that opens as a
-valid B+ tree. `find_index` and `list_indexes` retain that header record ID so
-the tree can be reopened. Catalog reads reject truncated metadata, unknown type
-tags or flags, trailing bytes, and duplicate persisted names.
+empty schemas, ASCII-case-insensitive duplicate column or table names, unknown
+types, and schema version zero. `register_index` additionally requires an
+existing table and integer column, an ASCII-case-insensitively unique index
+name, and a header that opens as a valid B+ tree. `find_index` and
+`list_indexes` retain that header record ID so the tree can be reopened.
+Catalog reads reject truncated metadata, unknown type tags or flags, trailing
+bytes, and persisted names that alias under the same ASCII case folding.
 
 ## Record layout
 
@@ -47,7 +48,9 @@ Catalog entries reserve the four-byte `PFC1` prefix. It is followed by:
 | repeated | Column-name length and bytes, one-byte type, one-byte flags |
 
 Type tags are explicit (`1` integer, `2` text, `3` boolean); nullable is flag
-bit zero. Identifier strings are stored as bytes without Unicode normalization.
+bit zero. Identifier strings retain their original bytes. Namespace uniqueness
+folds only ASCII `A` through `Z`; quoted identifiers, Unicode normalization,
+and locale-aware case folding are not supported.
 
 Index entries reserve the four-byte `PFX1` prefix. It is followed by:
 

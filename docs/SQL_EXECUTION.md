@@ -60,10 +60,11 @@ indexed table, and contain its recorded key; stale logical entries fail as table
 corruption rather than returning the wrong row.
 
 Unquoted table and column names are resolved case-insensitively while the
-catalog's original spelling is retained in output metadata. A case-insensitive
-collision is reported as ambiguous. Unknown names, mismatched literal types,
-malformed hand-built plans, and ordered boolean comparisons fail during
-binding—before a table row is read. Projection may reorder or repeat columns.
+catalog's original spelling is retained in output metadata. Catalog writes
+reject case-insensitive collisions, and catalog reads classify persisted aliases
+as corruption before binding. Unknown names, mismatched literal types, malformed
+hand-built plans, and ordered boolean comparisons fail during binding—before a
+table row is read. Projection may reorder or repeat columns.
 
 Integer comparisons are signed numeric comparisons; text comparisons use
 `std::string` byte ordering; booleans support only equality and inequality.

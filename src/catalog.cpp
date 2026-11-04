@@ -19,6 +19,17 @@ constexpr std::array<std::byte, 4> kIndexMagic{std::byte{'P'}, std::byte{'F'}, s
 constexpr std::uint16_t kFormatVersion = 1;
 constexpr std::uint8_t kNullable = 1;
 
+char ascii_lower(char value) {
+  return value >= 'A' && value <= 'Z' ? static_cast<char>(value + ('a' - 'A')) : value;
+}
+
+std::string identifier_key(std::string_view value) {
+  std::string key;
+  key.reserve(value.size());
+  for (const auto character : value) key.push_back(ascii_lower(character));
+  return key;
+}
+
 void append_u16(std::vector<std::byte>& output, std::uint16_t value) {
   output.push_back(static_cast<std::byte>(value & 0xffU));
   output.push_back(static_cast<std::byte>((value >> 8U) & 0xffU));
@@ -96,7 +107,9 @@ void validate_table(const TableDefinition& table) {
       throw std::invalid_argument("column name is too long");
     }
     validate_type(column.type);
-    if (!names.insert(column.name).second) throw std::invalid_argument("column names must be unique");
+    if (!names.insert(identifier_key(column.name)).second) {
+      throw std::invalid_argument("column names must be unique case-insensitively");
+    }
   }
 }
 
@@ -164,7 +177,9 @@ TableDefinition decode(std::span<const std::byte> bytes) {
   for (std::size_t index = 0; index < column_count; ++index) {
     auto name = read_text(bytes, offset);
     if (name.empty()) throw CatalogCorruption("catalog column name is empty");
-    if (!names.insert(name).second) throw CatalogCorruption("catalog has duplicate column names");
+    if (!names.insert(identifier_key(name)).second) {
+      throw CatalogCorruption("catalog has case-insensitive duplicate column names");
+    }
     require_bytes(bytes, offset, 2);
     const auto type = decode_type(bytes[offset++]);
     const auto flags = std::to_integer<unsigned>(bytes[offset++]);
@@ -222,7 +237,10 @@ IndexDefinition decode_index(std::span<const std::byte> bytes) {
 
 RecordId Catalog::create_table(const TableDefinition& table) {
   validate_table(table);
-  if (find_table(table.name)) throw std::invalid_argument("table already exists");
+  const auto key = identifier_key(table.name);
+  for (const auto& existing : list_tables()) {
+    if (identifier_key(existing.name) == key) throw std::invalid_argument("table already exists");
+  }
   const auto bytes = encode(table);
   return records_.insert(bytes);
 }
@@ -234,7 +252,9 @@ std::optional<TableDefinition> Catalog::find_table(std::string_view name) {
   while (auto record = cursor.next()) {
     if (!has_magic(record->bytes, kTableMagic)) continue;
     auto table = decode(record->bytes);
-    if (!names.insert(table.name).second) throw CatalogCorruption("catalog contains duplicate table names");
+    if (!names.insert(identifier_key(table.name)).second) {
+      throw CatalogCorruption("catalog contains case-insensitive duplicate table names");
+    }
     if (table.name == name) found = std::move(table);
   }
   return found;
@@ -247,7 +267,9 @@ std::vector<TableDefinition> Catalog::list_tables() {
   while (auto record = cursor.next()) {
     if (!has_magic(record->bytes, kTableMagic)) continue;
     auto table = decode(record->bytes);
-    if (!names.insert(table.name).second) throw CatalogCorruption("catalog contains duplicate table names");
+    if (!names.insert(identifier_key(table.name)).second) {
+      throw CatalogCorruption("catalog contains case-insensitive duplicate table names");
+    }
     tables.push_back(std::move(table));
   }
   return tables;
@@ -255,8 +277,11 @@ std::vector<TableDefinition> Catalog::list_tables() {
 
 RecordId Catalog::register_index(const IndexDefinition& index) {
   validate_index_identifiers(index);
+  const auto name_key = identifier_key(index.name);
   for (const auto& existing : list_indexes()) {
-    if (existing.name == index.name) throw std::invalid_argument("index already exists");
+    if (identifier_key(existing.name) == name_key) {
+      throw std::invalid_argument("index already exists");
+    }
     if (existing.header_id == index.header_id) {
       throw std::invalid_argument("index tree is already registered");
     }
@@ -282,7 +307,9 @@ std::optional<IndexDefinition> Catalog::find_index(std::string_view name) {
   while (auto record = cursor.next()) {
     if (!has_magic(record->bytes, kIndexMagic)) continue;
     auto index = decode_index(record->bytes);
-    if (!names.insert(index.name).second) throw CatalogCorruption("catalog contains duplicate index names");
+    if (!names.insert(identifier_key(index.name)).second) {
+      throw CatalogCorruption("catalog contains case-insensitive duplicate index names");
+    }
     if (!header_ids.insert(record_key(index.header_id)).second) {
       throw CatalogCorruption("catalog contains shared index tree ownership");
     }
@@ -299,7 +326,9 @@ std::vector<IndexDefinition> Catalog::list_indexes() {
   while (auto record = cursor.next()) {
     if (!has_magic(record->bytes, kIndexMagic)) continue;
     auto index = decode_index(record->bytes);
-    if (!names.insert(index.name).second) throw CatalogCorruption("catalog contains duplicate index names");
+    if (!names.insert(identifier_key(index.name)).second) {
+      throw CatalogCorruption("catalog contains case-insensitive duplicate index names");
+    }
     if (!header_ids.insert(record_key(index.header_id)).second) {
       throw CatalogCorruption("catalog contains shared index tree ownership");
     }
