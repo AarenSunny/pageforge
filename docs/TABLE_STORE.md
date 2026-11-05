@@ -4,7 +4,9 @@
 can be inserted, read by record ID, scanned, or deleted using its named table.
 The table's persisted schema validates every inserted tuple and decodes every
 returned one. Inserts and deletes also maintain every registered B+ tree index
-owned by the table; nullable integer columns simply omit null keys.
+owned by the table; nullable integer columns simply omit null keys. Table and
+index lookups are ASCII-case-insensitive and preserve the catalog's original
+spelling in stored row ownership.
 
 ```cpp
 auto heap = pageforge::HeapFile::create("people.db");

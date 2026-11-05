@@ -26,12 +26,16 @@ pool.flush_all();
 ```
 
 `find_table` and `list_tables` scan persisted records and reconstruct their
-schemas after the database is reopened. Creation rejects empty identifiers,
+schemas after the database is reopened. Named lookups use the same ASCII
+case-insensitive namespace as creation while returning the originally stored
+spelling. Creation rejects empty identifiers,
 empty schemas, ASCII-case-insensitive duplicate column or table names, unknown
 types, and schema version zero. `register_index` additionally requires an
 existing table and integer column, an ASCII-case-insensitively unique index
-name, and a header that opens as a valid B+ tree. `find_index` and
-`list_indexes` retain that header record ID so the tree can be reopened.
+name, and a header that opens as a valid B+ tree. Index registration resolves
+table and column aliases case-insensitively, then persists their canonical
+catalog spelling. `find_index` and `list_indexes` retain that header record ID
+so the tree can be reopened.
 Catalog reads reject truncated metadata, unknown type tags or flags, trailing
 bytes, and persisted names that alias under the same ASCII case folding.
 

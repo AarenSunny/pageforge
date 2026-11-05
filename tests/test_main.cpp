@@ -624,6 +624,8 @@ void catalog_persists_table_schemas() {
     const auto events_id = catalog.create_table(events);
     check(people_id.page_id == 0 && events_id.page_id == 0, "small catalog entries should share a page");
     check(catalog.find_table("people") == people, "created table should be immediately discoverable");
+    check(catalog.find_table("PEOPLE") == people,
+          "table lookup should use the catalog's case-insensitive namespace");
     check(!catalog.find_table("missing"), "unknown table should return no definition");
     const auto tables = catalog.list_tables();
     check(tables.size() == 2 && tables[0] == people && tables[1] == events,
@@ -635,7 +637,8 @@ void catalog_persists_table_schemas() {
     BufferPool pool(heap, 1);
     RecordStore records(pool);
     Catalog catalog(records);
-    check(catalog.find_table("people") == people, "table schema and version should survive reopen");
+    check(catalog.find_table("PEOPLE") == people,
+          "case-insensitive table lookup should survive reopen");
     check(catalog.find_table("events") == events, "nullable columns should survive reopen");
   }
   std::filesystem::remove(path);
@@ -733,9 +736,12 @@ void catalog_persists_index_ownership() {
           "catalog-owned index should accept entries before registration");
     auto definition = expected;
     definition.header_id = header_id;
-    (void)catalog.register_index(definition);
-    check(catalog.find_index("people_id_idx") == definition,
-          "registered index should be immediately discoverable");
+    auto alias = definition;
+    alias.table = "PEOPLE";
+    alias.column = "ID";
+    (void)catalog.register_index(alias);
+    check(catalog.find_index("PEOPLE_ID_IDX") == definition,
+          "registered index lookup and ownership should use canonical catalog names");
     check(!catalog.find_index("missing"), "unknown index should return no definition");
     check(catalog.list_indexes() == std::vector<IndexDefinition>{definition},
           "index catalog should preserve creation order and ownership");
@@ -748,8 +754,8 @@ void catalog_persists_index_ownership() {
     Catalog catalog(records);
     auto definition = expected;
     definition.header_id = header_id;
-    check(catalog.find_index("people_id_idx") == definition,
-          "index ownership should survive database reopen");
+    check(catalog.find_index("PEOPLE_ID_IDX") == definition,
+          "case-insensitive index lookup should survive database reopen");
     auto index = BPlusTreeIndex::open(records, definition.header_id);
     check(index.find(7) == std::vector<RecordId>{{42, 1}} &&
               index.find(9) == std::vector<RecordId>{{42, 2}},
@@ -871,10 +877,11 @@ void typed_tables_persist_and_isolate_rows() {
                                            {"title", pageforge::DataType::Text, false}}, 1});
     (void)records.insert(bytes("untyped record"));
     TableStore tables(records, catalog);
-    ada_id = tables.insert("people", ada);
+    ada_id = tables.insert("PEOPLE", ada);
     grace_id = tables.insert("people", grace);
     const auto event_id = tables.insert("events", event);
-    check(tables.read("people", ada_id) == ada, "typed table read should decode values");
+    check(tables.read("PEOPLE", ada_id) == ada,
+          "typed table access should use the catalog's case-insensitive namespace");
     check(tables.read("events", event_id) == event, "second table should use its own schema");
     check_throws<std::invalid_argument>([&] { (void)tables.read("events", ada_id); },
                                         "a row must not be read under another table");
@@ -1048,7 +1055,7 @@ void typed_tables_build_indexes_for_existing_rows() {
     const auto definition = catalog.find_index("items_score_idx");
     check(definition && definition->table == "items" && definition->column == "score",
           "built index should become catalog-owned after existing rows are populated");
-    const auto matches = tables.lookup_index("items_score_idx", 7);
+    const auto matches = tables.lookup_index("ITEMS_SCORE_IDX", 7);
     check(matches.size() == 2 && matches[0].id == first && matches[1].id == second,
           "index build should include duplicate existing keys and omit nulls");
 

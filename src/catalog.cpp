@@ -246,6 +246,7 @@ RecordId Catalog::create_table(const TableDefinition& table) {
 }
 
 std::optional<TableDefinition> Catalog::find_table(std::string_view name) {
+  const auto key = identifier_key(name);
   std::optional<TableDefinition> found;
   std::unordered_set<std::string> names;
   auto cursor = records_.cursor();
@@ -255,7 +256,7 @@ std::optional<TableDefinition> Catalog::find_table(std::string_view name) {
     if (!names.insert(identifier_key(table.name)).second) {
       throw CatalogCorruption("catalog contains case-insensitive duplicate table names");
     }
-    if (table.name == name) found = std::move(table);
+    if (identifier_key(table.name) == key) found = std::move(table);
   }
   return found;
 }
@@ -288,18 +289,23 @@ RecordId Catalog::register_index(const IndexDefinition& index) {
   }
   const auto table = find_table(index.table);
   if (!table) throw std::invalid_argument("index table does not exist");
+  const auto column_key = identifier_key(index.column);
   const auto column = std::find_if(table->schema.begin(), table->schema.end(), [&](const auto& candidate) {
-    return candidate.name == index.column;
+    return identifier_key(candidate.name) == column_key;
   });
   if (column == table->schema.end()) throw std::invalid_argument("index column does not exist");
   if (column->type != DataType::Integer) {
     throw std::invalid_argument("B+ tree indexes require an integer column");
   }
   (void)BPlusTreeIndex::open(records_, index.header_id);
-  return records_.insert(encode_index(index));
+  auto normalized = index;
+  normalized.table = table->name;
+  normalized.column = column->name;
+  return records_.insert(encode_index(normalized));
 }
 
 std::optional<IndexDefinition> Catalog::find_index(std::string_view name) {
+  const auto key = identifier_key(name);
   std::optional<IndexDefinition> found;
   std::unordered_set<std::string> names;
   std::unordered_set<std::uint64_t> header_ids;
@@ -313,7 +319,7 @@ std::optional<IndexDefinition> Catalog::find_index(std::string_view name) {
     if (!header_ids.insert(record_key(index.header_id)).second) {
       throw CatalogCorruption("catalog contains shared index tree ownership");
     }
-    if (index.name == name) found = std::move(index);
+    if (identifier_key(index.name) == key) found = std::move(index);
   }
   return found;
 }
