@@ -1646,9 +1646,10 @@ void sql_execution_rejects_binding_errors() {
         "all names should bind before an eager index lookup reads storage");
     auto indexed_zero = pageforge::execute_select_sql(
         tables, catalog, "SELECT id FROM people WHERE id = 1 LIMIT 0");
+    const pageforge::Schema expected_indexed_schema{
+        {"id", pageforge::DataType::Integer, false}};
     check(indexed_zero.access_path() == pageforge::SelectAccessPath::IndexLookup &&
-              indexed_zero.output_schema() ==
-                  pageforge::Schema{{"id", pageforge::DataType::Integer, false}} &&
+              indexed_zero.output_schema() == expected_indexed_schema &&
               !indexed_zero.next(),
           "LIMIT zero should preserve the chosen plan and schema without opening its index");
     auto contradiction = pageforge::execute_select_sql(
