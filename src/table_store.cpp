@@ -248,7 +248,7 @@ RecordId TableStore::create_index(std::string_view index_name, std::string_view 
   }
   const auto table = require_table(table_name);
   const auto column = std::find_if(table.schema.begin(), table.schema.end(), [&](const auto& candidate) {
-    return candidate.name == column_name;
+    return equal_identifier(candidate.name, column_name);
   });
   if (column == table.schema.end()) throw std::invalid_argument("index column does not exist");
   if (column->type != DataType::Integer) {

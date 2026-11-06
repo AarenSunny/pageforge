@@ -1051,10 +1051,10 @@ void typed_tables_build_indexes_for_existing_rows() {
     (void)tables.insert("items", {std::monostate{}, std::string("unscored")});
     const auto second = tables.insert("items", {std::int64_t{7}, std::string("second")});
 
-    (void)tables.create_index("items_score_idx", "items", "score");
+    (void)tables.create_index("items_score_idx", "ITEMS", "SCORE");
     const auto definition = catalog.find_index("items_score_idx");
     check(definition && definition->table == "items" && definition->column == "score",
-          "built index should become catalog-owned after existing rows are populated");
+          "index build aliases should retain canonical catalog ownership");
     const auto matches = tables.lookup_index("ITEMS_SCORE_IDX", 7);
     check(matches.size() == 2 && matches[0].id == first && matches[1].id == second,
           "index build should include duplicate existing keys and omit nulls");

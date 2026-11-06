@@ -49,9 +49,11 @@ decoding reverse-key groups because the current leaves have no reverse links.
 
 `create_index(name, table, column)` builds an integer B+ tree from all existing
 non-null table rows before registering it in the catalog. Duplicate keys remain
-distinct because index entries include the record ID. Once registration
-succeeds, ordinary inserts and deletes maintain the new index automatically.
-Empty or oversized names, non-integer target columns, and
+distinct because index entries include the record ID. Table and column aliases
+use the same ASCII-case-insensitive namespace as other table operations, while
+the index definition retains their canonical catalog spelling. Once
+registration succeeds, ordinary inserts and deletes maintain the new index
+automatically. Empty or oversized names, non-integer target columns, and
 ASCII-case-insensitive duplicate names are rejected before tree allocation.
 
 ## Row envelope

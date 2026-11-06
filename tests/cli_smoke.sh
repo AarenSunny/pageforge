@@ -77,7 +77,7 @@ special=$(printf 'Tab\tName\\Path')
   "$(printf 'id\n5')" ]
 [ "$("$cli" "$database" query "EXPLAIN SELECT name FROM people WHERE id = 2")" = \
   "TABLE_SCAN table=People predicates=1 residual_predicates=1 sort=false limit=none" ]
-"$cli" "$database" create-index people_id_idx people id >/dev/null
+"$cli" "$database" create-index people_id_idx PEOPLE ID >/dev/null
 [ "$("$cli" "$database" verify-index PEOPLE_ID_IDX)" = \
   "verified index people_id_idx rows=5" ]
 [ "$("$cli" "$database" query "EXPLAIN SELECT name FROM people WHERE id = 2")" = \
