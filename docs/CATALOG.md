@@ -35,7 +35,10 @@ existing table and integer column, an ASCII-case-insensitively unique index
 name, and a header that opens as a valid B+ tree. Index registration resolves
 table and column aliases case-insensitively, then persists their canonical
 catalog spelling. `find_index` and `list_indexes` retain that header record ID
-so the tree can be reopened.
+so the tree can be reopened. Index reads resolve persisted table and column
+references through the current catalog, returning canonical spelling for
+legacy aliases and rejecting missing or non-integer targets as corruption
+before table writes can silently stop maintaining an owned tree.
 Catalog reads reject truncated metadata, unknown type tags or flags, trailing
 bytes, and persisted names that alias under the same ASCII case folding.
 

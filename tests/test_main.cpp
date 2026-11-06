@@ -859,6 +859,77 @@ void catalog_rejects_shared_index_tree_ownership() {
   std::filesystem::remove(path);
 }
 
+void catalog_resolves_persisted_index_references() {
+  const auto path =
+      std::filesystem::temp_directory_path() / "pageforge-index-catalog-reference-test.db";
+  std::filesystem::remove(path);
+  {
+    auto heap = HeapFile::create(path);
+    BufferPool pool(heap, 3);
+    RecordStore records(pool);
+    Catalog catalog(records);
+    (void)catalog.create_table({"People", people_schema(), 1});
+    auto index = BPlusTreeIndex::create(records);
+    const auto metadata_id =
+        catalog.register_index({"lookup", "People", "id", index.header_id()});
+
+    auto encoded = records.read(metadata_id);
+    auto read_length = [&](std::size_t offset) {
+      check(offset + 2 <= encoded.size(), "encoded index identifier length should be present");
+      return static_cast<std::size_t>(std::to_integer<unsigned>(encoded[offset])) |
+             (static_cast<std::size_t>(std::to_integer<unsigned>(encoded[offset + 1])) << 8U);
+    };
+    auto identifier_offset = [&](std::size_t& offset, std::string_view expected) {
+      const auto length = read_length(offset);
+      offset += 2;
+      check(length == expected.size() && offset + length <= encoded.size(),
+            "encoded index identifier should match the test fixture");
+      const auto result = offset;
+      offset += length;
+      return result;
+    };
+    std::size_t offset = 16;
+    (void)identifier_offset(offset, "lookup");
+    const auto table_offset = identifier_offset(offset, "People");
+    const auto column_offset = identifier_offset(offset, "id");
+    check(offset == encoded.size(), "encoded index fixture should contain no trailing bytes");
+
+    for (std::size_t index = 0; index < 6; ++index) {
+      encoded[table_offset + index] = static_cast<std::byte>("pEOPLE"[index]);
+    }
+    encoded[column_offset] = std::byte{'I'};
+    encoded[column_offset + 1] = std::byte{'D'};
+    records.replace(metadata_id, encoded);
+
+    const IndexDefinition expected{"lookup", "People", "id", index.header_id()};
+    check(catalog.list_indexes() == std::vector<IndexDefinition>{expected},
+          "persisted index aliases should resolve to canonical catalog ownership");
+    TableStore tables(records, catalog);
+    const auto row_id = tables.insert(
+        "people", {std::int64_t{7}, std::string("Ada"), true, std::monostate{}});
+    auto maintained = BPlusTreeIndex::open(records, index.header_id());
+    check(maintained.find(7) == std::vector<RecordId>{row_id},
+          "canonicalized persisted ownership should keep later table writes indexed");
+
+    for (std::size_t index = 0; index < 6; ++index) {
+      encoded[table_offset + index] = static_cast<std::byte>("orphan"[index]);
+    }
+    records.replace(metadata_id, encoded);
+    check_throws<CatalogCorruption>([&] { (void)catalog.list_indexes(); },
+                                    "indexes that reference missing tables should be corruption");
+
+    for (std::size_t index = 0; index < 6; ++index) {
+      encoded[table_offset + index] = static_cast<std::byte>("People"[index]);
+    }
+    encoded[column_offset] = std::byte{'x'};
+    encoded[column_offset + 1] = std::byte{'x'};
+    records.replace(metadata_id, encoded);
+    check_throws<CatalogCorruption>([&] { (void)catalog.find_index("lookup"); },
+                                    "indexes that reference missing columns should be corruption");
+  }
+  std::filesystem::remove(path);
+}
+
 void typed_tables_persist_and_isolate_rows() {
   const auto path = std::filesystem::temp_directory_path() / "pageforge-tables-test.db";
   std::filesystem::remove(path);
@@ -2241,6 +2312,7 @@ int main() {
       {"catalog index ownership persistence", catalog_persists_index_ownership},
       {"catalog index definition validation", catalog_validates_index_definitions},
       {"catalog index tree ownership", catalog_rejects_shared_index_tree_ownership},
+      {"catalog index reference validation", catalog_resolves_persisted_index_references},
       {"typed table persistence and isolation", typed_tables_persist_and_isolate_rows},
       {"typed table input and ownership validation", typed_tables_validate_input_and_ownership},
       {"typed table automatic index maintenance", typed_tables_maintain_registered_indexes},

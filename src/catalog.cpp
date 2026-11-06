@@ -233,6 +233,31 @@ IndexDefinition decode_index(std::span<const std::byte> bytes) {
   return index;
 }
 
+IndexDefinition resolve_index_reference(IndexDefinition index,
+                                        std::span<const TableDefinition> tables) {
+  const auto table_key = identifier_key(index.table);
+  const auto table = std::find_if(tables.begin(), tables.end(), [&](const auto& candidate) {
+    return identifier_key(candidate.name) == table_key;
+  });
+  if (table == tables.end()) {
+    throw CatalogCorruption("index catalog entry references a missing table");
+  }
+  const auto column_key = identifier_key(index.column);
+  const auto column = std::find_if(table->schema.begin(), table->schema.end(),
+                                   [&](const auto& candidate) {
+                                     return identifier_key(candidate.name) == column_key;
+                                   });
+  if (column == table->schema.end()) {
+    throw CatalogCorruption("index catalog entry references a missing column");
+  }
+  if (column->type != DataType::Integer) {
+    throw CatalogCorruption("index catalog entry references a non-integer column");
+  }
+  index.table = table->name;
+  index.column = column->name;
+  return index;
+}
+
 }  // namespace
 
 RecordId Catalog::create_table(const TableDefinition& table) {
@@ -306,13 +331,14 @@ RecordId Catalog::register_index(const IndexDefinition& index) {
 
 std::optional<IndexDefinition> Catalog::find_index(std::string_view name) {
   const auto key = identifier_key(name);
+  const auto tables = list_tables();
   std::optional<IndexDefinition> found;
   std::unordered_set<std::string> names;
   std::unordered_set<std::uint64_t> header_ids;
   auto cursor = records_.cursor();
   while (auto record = cursor.next()) {
     if (!has_magic(record->bytes, kIndexMagic)) continue;
-    auto index = decode_index(record->bytes);
+    auto index = resolve_index_reference(decode_index(record->bytes), tables);
     if (!names.insert(identifier_key(index.name)).second) {
       throw CatalogCorruption("catalog contains case-insensitive duplicate index names");
     }
@@ -325,13 +351,14 @@ std::optional<IndexDefinition> Catalog::find_index(std::string_view name) {
 }
 
 std::vector<IndexDefinition> Catalog::list_indexes() {
+  const auto tables = list_tables();
   std::vector<IndexDefinition> indexes;
   std::unordered_set<std::string> names;
   std::unordered_set<std::uint64_t> header_ids;
   auto cursor = records_.cursor();
   while (auto record = cursor.next()) {
     if (!has_magic(record->bytes, kIndexMagic)) continue;
-    auto index = decode_index(record->bytes);
+    auto index = resolve_index_reference(decode_index(record->bytes), tables);
     if (!names.insert(identifier_key(index.name)).second) {
       throw CatalogCorruption("catalog contains case-insensitive duplicate index names");
     }
