@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -1840,6 +1841,83 @@ void sql_execution_uses_indexed_equality_lookups() {
   std::filesystem::remove(path);
 }
 
+void sql_index_plans_match_table_scan_results() {
+  const auto path =
+      std::filesystem::temp_directory_path() / "pageforge-sql-index-differential-test.db";
+  std::filesystem::remove(path);
+  {
+    auto heap = HeapFile::create(path);
+    BufferPool pool(heap, 8);
+    RecordStore records(pool);
+    Catalog catalog(records);
+    (void)catalog.create_table(
+        {"Items", {{"id", pageforge::DataType::Integer, false},
+                   {"score", pageforge::DataType::Integer, false},
+                   {"active", pageforge::DataType::Boolean, false}},
+         1});
+    TableStore tables(records, catalog);
+    for (std::int64_t row = 0; row < 96; ++row) {
+      (void)tables.insert("Items", {row % 25 - 12, row * 17 - 700, row % 3 == 0});
+    }
+
+    constexpr std::uint64_t kSeed = 0x9e3779b97f4a7c15ULL;
+    constexpr std::size_t kSamples = 256;
+    std::uint64_t state = kSeed;
+    const auto next = [&]() {
+      state = state * 6364136223846793005ULL + 1442695040888963407ULL;
+      return state;
+    };
+    const std::array<std::string_view, 5> indexed_comparisons{"=", "<", "<=", ">", ">="};
+    const std::array<std::string_view, 6> comparisons{"=", "!=", "<", "<=", ">", ">="};
+    std::vector<std::string> queries;
+    queries.reserve(kSamples);
+    for (std::size_t sample = 0; sample < kSamples; ++sample) {
+      const auto first = indexed_comparisons[next() % indexed_comparisons.size()];
+      const auto first_value = static_cast<std::int64_t>(next() % 41) - 20;
+      std::string sql = "SELECT id, score, active FROM Items WHERE id " +
+                        std::string(first) + " " + std::to_string(first_value);
+      if ((next() & 1U) != 0) {
+        const auto second = comparisons[next() % comparisons.size()];
+        const auto second_value = static_cast<std::int64_t>(next() % 41) - 20;
+        sql += " AND id " + std::string(second) + " " + std::to_string(second_value);
+      }
+      if (next() % 3 == 0) {
+        sql += next() % 2 == 0 ? " AND active = TRUE" : " AND active = FALSE";
+      }
+      switch (next() % 3) {
+        case 0: sql += " ORDER BY id"; break;
+        case 1: sql += " ORDER BY id DESC"; break;
+        default: sql += " ORDER BY score"; break;
+      }
+      sql += " LIMIT " + std::to_string(next() % 13);
+      queries.push_back(std::move(sql));
+    }
+
+    using Result = std::vector<std::pair<RecordId, pageforge::Tuple>>;
+    const auto run = [&](const std::string& sql) {
+      Result result;
+      auto query = pageforge::execute_select_sql(tables, catalog, sql);
+      while (auto row = query.next()) {
+        result.emplace_back(row->id, std::move(row->values));
+      }
+      return result;
+    };
+    std::vector<Result> scan_results;
+    scan_results.reserve(queries.size());
+    for (const auto& sql : queries) scan_results.push_back(run(sql));
+
+    (void)tables.create_index("items_id_idx", "Items", "id");
+    for (std::size_t sample = 0; sample < queries.size(); ++sample) {
+      const auto plan = pageforge::explain_select(catalog, pageforge::parse_select(queries[sample]));
+      check(plan.access_path != pageforge::SelectAccessPath::TableScan,
+            "generated predicate should select an index access path: " + queries[sample]);
+      check(run(queries[sample]) == scan_results[sample],
+            "indexed execution should match its table-scan result: " + queries[sample]);
+    }
+  }
+  std::filesystem::remove(path);
+}
+
 void sql_explain_reports_access_paths_without_running_rows() {
   const auto path = std::filesystem::temp_directory_path() / "pageforge-sql-explain-test.db";
   std::filesystem::remove(path);
@@ -2334,6 +2412,7 @@ int main() {
       {"SQL binding and execution", sql_execution_binds_and_streams_results},
       {"SQL binding validation", sql_execution_rejects_binding_errors},
       {"SQL indexed equality execution", sql_execution_uses_indexed_equality_lookups},
+      {"SQL indexed plan differential", sql_index_plans_match_table_scan_results},
       {"SQL EXPLAIN access paths", sql_explain_reports_access_paths_without_running_rows},
       {"B+ tree routing, splits, ranges, and reopen", bplus_tree_routes_splits_ranges_and_reopens},
       {"B+ tree corruption detection", bplus_tree_detects_corruption},

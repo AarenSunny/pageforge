@@ -59,6 +59,15 @@ lookup. Every indexed candidate is validated to still exist, belong to the
 indexed table, and contain its recorded key; stale logical entries fail as table
 corruption rather than returning the wrong row.
 
+The unit suite also executes 256 deterministically generated query shapes
+before and after building an index, requiring every indexed result (including
+row order) to match its table-scan result. The fixed corpus combines equality
+and range bounds, compatible and contradictory conjunctions, residual boolean
+filters, forward and reverse index order, blocking sorts, duplicate keys, and
+limits. This is repeatable differential coverage of the supported single-table
+grammar, not a substitute for production optimizer fuzzing or concurrency
+testing.
+
 Unquoted table and column names are resolved case-insensitively while the
 catalog's original spelling is retained in output metadata. Catalog writes
 reject case-insensitive collisions, and catalog reads classify persisted aliases
