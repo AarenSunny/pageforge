@@ -1213,6 +1213,40 @@ void typed_tables_read_validated_index_ranges() {
   std::filesystem::remove(path);
 }
 
+void typed_tables_verify_complete_indexes() {
+  const auto path =
+      std::filesystem::temp_directory_path() / "pageforge-table-index-verify-test.db";
+  std::filesystem::remove(path);
+  {
+    auto heap = HeapFile::create(path);
+    BufferPool pool(heap, 4);
+    RecordStore records(pool);
+    Catalog catalog(records);
+    (void)catalog.create_table({"items", {{"score", pageforge::DataType::Integer, true}}, 1});
+    TableStore tables(records, catalog);
+    const auto first = tables.insert("items", {std::int64_t{7}});
+    const auto second = tables.insert("items", {std::int64_t{9}});
+    (void)tables.insert("items", {std::monostate{}});
+    (void)tables.create_index("items_score_idx", "items", "score");
+    check(tables.verify_index("ITEMS_SCORE_IDX") == 2,
+          "complete verification should count every indexed non-null row");
+
+    const auto definition = catalog.find_index("items_score_idx");
+    check(definition.has_value(), "verification test index should be registered");
+    auto damaged = BPlusTreeIndex::open(records, definition->header_id);
+    check(damaged.erase(9, second), "test setup should remove one valid index entry");
+    check(tables.lookup_index_range("items_score_idx", std::nullopt, std::nullopt).size() == 1,
+          "ordinary index traversal cannot infer that an entry is missing");
+    check_throws<TableCorruption>(
+        [&] { (void)tables.verify_index("items_score_idx"); },
+        "complete verification should reject an index missing a table row");
+    check(tables.read("items", first) == pageforge::Tuple{std::int64_t{7}} &&
+              tables.read("items", second) == pageforge::Tuple{std::int64_t{9}},
+          "verification must not mutate the indexed table");
+  }
+  std::filesystem::remove(path);
+}
+
 void typed_tables_reject_corrupt_owned_indexes_before_writes() {
   const auto path = std::filesystem::temp_directory_path() / "pageforge-table-index-corruption-test.db";
   std::filesystem::remove(path);
@@ -2398,6 +2432,7 @@ int main() {
        typed_tables_reject_missing_index_entries_on_delete},
       {"typed table existing-row index build", typed_tables_build_indexes_for_existing_rows},
       {"typed table validated index ranges", typed_tables_read_validated_index_ranges},
+      {"typed table complete index verification", typed_tables_verify_complete_indexes},
       {"typed table index corruption safety", typed_tables_reject_corrupt_owned_indexes_before_writes},
       {"typed table corruption detection", typed_tables_detect_corrupt_envelopes},
       {"query filter, projection, and limit", query_pipeline_filters_projects_and_limits},

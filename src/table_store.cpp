@@ -331,6 +331,38 @@ std::vector<TableRow> TableStore::lookup_index_range(
   return rows;
 }
 
+std::size_t TableStore::verify_index(std::string_view index_name) {
+  const auto definition = catalog_.find_index(index_name);
+  if (!definition) throw std::out_of_range("index does not exist");
+  const auto table = require_table(definition->table);
+  const auto column = std::find_if(table.schema.begin(), table.schema.end(), [&](const auto& candidate) {
+    return candidate.name == definition->column;
+  });
+  if (column == table.schema.end() || column->type != DataType::Integer) {
+    throw CatalogCorruption("index definition no longer matches its table schema");
+  }
+  const auto position = static_cast<std::size_t>(column - table.schema.begin());
+  auto index = BPlusTreeIndex::open(records_, definition->header_id);
+  const auto entries = index.range(std::nullopt, std::nullopt);
+
+  std::vector<IndexEntry> expected;
+  for (auto row : scan(table.name)) {
+    if (std::holds_alternative<std::monostate>(row.values[position])) continue;
+    expected.push_back({std::get<std::int64_t>(row.values[position]), row.id});
+  }
+  std::sort(expected.begin(), expected.end(), [](const auto& left, const auto& right) {
+    if (left.key != right.key) return left.key < right.key;
+    if (left.value.page_id != right.value.page_id) {
+      return left.value.page_id < right.value.page_id;
+    }
+    return left.value.slot_id < right.value.slot_id;
+  });
+  if (entries != expected) {
+    throw TableCorruption("index entries do not match indexed table rows");
+  }
+  return entries.size();
+}
+
 bool TableStore::erase(std::string_view table_name, RecordId id) {
   const auto table = require_table(table_name);
   std::vector<std::byte> bytes;

@@ -55,6 +55,7 @@ class TableStore {
       std::string_view index_name, std::optional<std::int64_t> lower,
       std::optional<std::int64_t> upper, bool descending = false,
       std::optional<std::size_t> limit = std::nullopt);
+  [[nodiscard]] std::size_t verify_index(std::string_view index_name);
   bool erase(std::string_view table_name, RecordId id);
 
  private:

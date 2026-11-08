@@ -446,8 +446,8 @@ int run(int argc, char* argv[]) {
               << ")\n";
   } else if (command == "verify-index") {
     const auto index = resolve_index(catalog, argv[3]);
-    const auto rows = tables.lookup_index_range(index.name, std::nullopt, std::nullopt);
-    std::cout << "verified index " << index.name << " rows=" << rows.size() << '\n';
+    const auto row_count = tables.verify_index(index.name);
+    std::cout << "verified index " << index.name << " rows=" << row_count << '\n';
   } else if (command == "insert") {
     const auto table = resolve_table(catalog, argv[3]);
     if (static_cast<std::size_t>(argc - 4) != table.schema.size()) {

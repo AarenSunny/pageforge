@@ -45,7 +45,7 @@ planner changing when the index is created.
 make check
 ```
 
-Explain that the command compiles with warnings treated as errors, runs 49
+Explain that the command compiles with warnings treated as errors, runs 57
 unit tests, exercises the complete CLI and ready-made demo database, and
 validates the benchmark contract.
 

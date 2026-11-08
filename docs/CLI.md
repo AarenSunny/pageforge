@@ -78,9 +78,11 @@ scans leave every predicate residual. Non-integer, null-test, and `!=`
 predicates remain table scans.
 
 `verify-index` resolves the index name case-insensitively, traverses every
-reachable entry in key order, and validates that each referenced typed row
-belongs to the catalog-owned table and still contains the indexed key. It
-prints the verified row count. This is a focused index-to-row consistency
+reachable entry in key order, derives the expected entries from the owned
+table, and requires the two sorted sets to match exactly. It therefore detects
+missing entries as well as stale references, wrong keys, and wrong-table
+references while correctly omitting null indexed values. It prints the
+verified non-null row count. This is a focused table-to-index consistency
 check, not a heap-wide catalog audit, orphan detector, repair tool, or
 concurrent-operation guarantee.
 
