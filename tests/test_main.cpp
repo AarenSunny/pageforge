@@ -1307,6 +1307,32 @@ void typed_tables_detect_corrupt_envelopes() {
                                   "row with unknown schema version should fail decoding");
   }
   std::filesystem::remove(version_path);
+
+  const auto ownership_path =
+      std::filesystem::temp_directory_path() / "pageforge-tables-ownership-test.db";
+  std::filesystem::remove(ownership_path);
+  {
+    auto heap = HeapFile::create(ownership_path);
+    BufferPool pool(heap, 2);
+    RecordStore records(pool);
+    Catalog catalog(records);
+    (void)catalog.create_table({"Events", {{"id", pageforge::DataType::Integer, false}}, 1});
+    TableStore tables(records, catalog);
+    const auto id = tables.insert("events", {std::int64_t{7}});
+    auto encoded = records.read(id);
+    encoded[12] = std::byte{'e'};  // Table name starts after the fixed row envelope fields.
+    records.replace(id, encoded);
+    check_throws<TableCorruption>(
+        [&] { (void)tables.scan("Events"); },
+        "scan should reject a noncanonical alias in a persisted row envelope");
+    check_throws<TableCorruption>(
+        [&] { (void)tables.read("events", id); },
+        "point reads should classify a noncanonical persisted owner as corruption");
+    check_throws<TableCorruption>(
+        [&] { (void)tables.erase("EVENTS", id); },
+        "deletes should classify a noncanonical persisted owner as corruption");
+  }
+  std::filesystem::remove(ownership_path);
 }
 
 void query_pipeline_filters_projects_and_limits() {

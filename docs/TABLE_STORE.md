@@ -71,9 +71,12 @@ Each typed row is an ordinary heap record with this prefix, followed by the
 
 Reading verifies ownership and the schema version before decoding values. A
 row ID from another table is rejected rather than being interpreted through the
-wrong schema. Scans ignore catalog entries, raw records, and other tables;
-malformed reserved row records fail validation instead of being silently
-skipped. Deletion checks ownership before tombstoning the underlying slot.
+wrong schema. API aliases remain case-insensitive, but a persisted row owner
+that differs only by case from the canonical catalog name is corruption because
+all legitimate writes store the canonical spelling. Scans ignore catalog
+entries, raw records, and other tables; malformed reserved row records fail
+validation instead of being silently skipped. Deletion checks ownership before
+tombstoning the underlying slot.
 
 ## Current boundaries
 

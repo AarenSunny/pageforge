@@ -90,6 +90,12 @@ RowEnvelope parse(std::span<const std::byte> bytes) {
   return {std::move(table_name), schema_version, bytes.subspan(offset)};
 }
 
+void validate_canonical_owner(const TableDefinition& table, const RowEnvelope& envelope) {
+  if (envelope.table_name != table.name && equal_identifier(envelope.table_name, table.name)) {
+    throw TableCorruption("table row owner does not use canonical catalog spelling");
+  }
+}
+
 std::vector<std::byte> wrap(const TableDefinition& table, std::span<const std::byte> tuple_bytes) {
   if (table.name.size() > std::numeric_limits<std::uint16_t>::max()) {
     throw std::invalid_argument("table name is too long");
@@ -155,6 +161,7 @@ TableRow read_index_row(RecordStore& records, const TableDefinition& table,
   } catch (const std::invalid_argument&) {
     throw TableCorruption("index references a record that is not a table row");
   }
+  validate_canonical_owner(table, envelope);
   if (envelope.table_name != table.name) {
     throw TableCorruption("index references a row owned by another table");
   }
@@ -175,6 +182,7 @@ std::optional<TableRow> TableCursor::next() {
   while (auto record = cursor_.next()) {
     if (!has_magic(record->bytes)) continue;
     const auto envelope = parse(record->bytes);
+    validate_canonical_owner(table_, envelope);
     if (envelope.table_name == table_.name) {
       return TableRow{record->id, decode_row(table_, envelope)};
     }
@@ -219,6 +227,7 @@ Tuple TableStore::read(std::string_view table_name, RecordId id) {
   const auto table = require_table(table_name);
   const auto bytes = records_.read(id);
   const auto envelope = parse(bytes);
+  validate_canonical_owner(table, envelope);
   if (envelope.table_name != table.name) throw std::invalid_argument("record belongs to another table");
   return decode_row(table, envelope);
 }
@@ -372,6 +381,7 @@ bool TableStore::erase(std::string_view table_name, RecordId id) {
     return false;
   }
   const auto envelope = parse(bytes);
+  validate_canonical_owner(table, envelope);
   if (envelope.table_name != table.name) throw std::invalid_argument("record belongs to another table");
   const auto values = decode_row(table, envelope);
   auto indexes = open_indexes(records_, catalog_, table, values);
