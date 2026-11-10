@@ -11,6 +11,8 @@
 
 namespace pageforge {
 
+class TableStore;
+
 inline constexpr std::size_t kBPlusLeafCapacity = 128;
 inline constexpr std::size_t kBPlusInternalCapacity = 128;
 
@@ -48,10 +50,14 @@ class BPlusTreeIndex {
                                               std::optional<std::size_t> limit = std::nullopt);
 
  private:
+  friend class TableStore;
+
   BPlusTreeIndex(RecordStore& records, RecordId header_id, RecordId root, RecordId first_leaf,
                  std::size_t height)
       : records_(records), header_id_(header_id), root_(root), first_leaf_(first_leaf),
         height_(height) {}
+
+  void destroy();
 
   RecordStore& records_;
   RecordId header_id_;

@@ -1157,6 +1157,37 @@ void typed_tables_build_indexes_for_existing_rows() {
   std::filesystem::remove(path);
 }
 
+void typed_tables_cleanup_failed_index_builds() {
+  const auto path =
+      std::filesystem::temp_directory_path() / "pageforge-table-index-cleanup-test.db";
+  std::filesystem::remove(path);
+  {
+    auto heap = HeapFile::create(path);
+    BufferPool pool(heap, 16);
+    RecordStore records(pool);
+    Catalog catalog(records);
+    (void)catalog.create_table(
+        {"items", {{"id", pageforge::DataType::Integer, false}}, 1});
+    TableStore tables(records, catalog);
+    constexpr std::size_t overflowing_rows =
+        pageforge::kBPlusLeafCapacity +
+        (pageforge::kBPlusInternalCapacity - 1) * (pageforge::kBPlusLeafCapacity / 2) + 1;
+    for (std::size_t row = 0; row < overflowing_rows; ++row) {
+      (void)tables.insert("items", {static_cast<std::int64_t>(row)});
+    }
+
+    const auto records_before = records.scan().size();
+    check_throws<PageFull>(
+        [&] { (void)tables.create_index("items_id_idx", "items", "id"); },
+        "an index build beyond the height-two boundary should fail explicitly");
+    check(!catalog.find_index("items_id_idx"),
+          "a failed index build must not register catalog ownership");
+    check(records.scan().size() == records_before,
+          "a failed index build should retire its unreachable tree records");
+  }
+  std::filesystem::remove(path);
+}
+
 void typed_tables_read_validated_index_ranges() {
   const auto path = std::filesystem::temp_directory_path() / "pageforge-table-index-range-test.db";
   std::filesystem::remove(path);
@@ -2457,6 +2488,7 @@ int main() {
       {"typed table missing index entry rejection",
        typed_tables_reject_missing_index_entries_on_delete},
       {"typed table existing-row index build", typed_tables_build_indexes_for_existing_rows},
+      {"typed table failed index build cleanup", typed_tables_cleanup_failed_index_builds},
       {"typed table validated index ranges", typed_tables_read_validated_index_ranges},
       {"typed table complete index verification", typed_tables_verify_complete_indexes},
       {"typed table index corruption safety", typed_tables_reject_corrupt_owned_indexes_before_writes},

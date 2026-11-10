@@ -67,8 +67,11 @@ before changing the full leaf. Recursive internal splits, minimum-occupancy
 merging/redistribution, and uniqueness constraints remain next steps.
 `BPlusTreeIndex` itself remains independent of metadata: direct callers must
 retain its header record ID, while `TableStore::create_index` backfills the tree
-and persists that ownership in the catalog. The SQL planner can then select the
-index for compatible integer equality, range, ordering, and limit operations.
+and persists that ownership in the catalog. If an in-process backfill fails
+while the tree remains readable, `TableStore` best-effort retires the
+unregistered records; direct tree users still own that lifecycle. The SQL
+planner can then select the index for compatible integer equality, range,
+ordering, and limit operations.
 
 Splits, deletion, and root promotion/collapse are not crash-atomic without the
 planned write-ahead log. A crash between their record rewrites may leave an

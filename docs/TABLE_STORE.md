@@ -92,14 +92,16 @@ accept the payload.
 Direct `Catalog::register_index` does not backfill rows; use
 `TableStore::create_index` when indexing an existing table. Index creation is
 single-threaded and non-transactional. It registers the tree only after the
-backfill succeeds, but a failure after tree allocation can leave unreachable
-internal records. Maintenance is best-effort atomic inside one process: a
-failed insert removes its row and prior index entries, while a failed delete
-restores prior entries. Without write-ahead logging, a process or machine crash
-can still interrupt a multi-record update. There is no schema migration,
-transaction, or concurrent writer support yet. A deleted record ID can be
-reused by a later insert, so callers must not treat old IDs as permanent
-external keys.
+backfill succeeds. If in-process backfill or registration fails while the new
+tree remains structurally readable, PageForge retires its unregistered header,
+root, and leaves before rethrowing the original error. This cleanup is
+best-effort and is not crash-atomic: a process or machine crash, or a partially
+written or corrupt tree, can still leave unreachable records until write-ahead
+recovery exists. Maintenance is likewise best-effort atomic inside one process:
+a failed insert removes its row and prior index entries, while a failed delete
+restores prior entries. There is no schema migration, transaction, or concurrent
+writer support yet. A deleted record ID can be reused by a later insert, so
+callers must not treat old IDs as permanent external keys.
 
 SQL planning uses the typed range API for compatible integer ordering
 predicates on one selected index and exposes the merged inclusive candidate

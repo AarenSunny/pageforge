@@ -383,6 +383,21 @@ std::size_t BPlusTreeIndex::leaf_count() {
   return validate_tree(records_, {height_, root_, first_leaf_}).size();
 }
 
+void BPlusTreeIndex::destroy() {
+  const auto leaves = validate_tree(records_, {height_, root_, first_leaf_});
+  if (!records_.erase(header_id_)) {
+    throw IndexCorruption("could not retire index header");
+  }
+  if (height_ == 2 && !records_.erase(root_)) {
+    throw IndexCorruption("could not retire index internal root");
+  }
+  for (const auto& leaf : leaves) {
+    if (!records_.erase(leaf.id)) {
+      throw IndexCorruption("could not retire index leaf");
+    }
+  }
+}
+
 bool BPlusTreeIndex::insert(std::int64_t key, RecordId value) {
   const IndexEntry entry{key, value};
   std::optional<Internal> internal;

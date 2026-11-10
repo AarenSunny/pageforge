@@ -6,6 +6,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <limits>
 #include <span>
 #include <string>
@@ -267,14 +268,24 @@ RecordId TableStore::create_index(std::string_view index_name, std::string_view 
   const auto position = static_cast<std::size_t>(column - table.schema.begin());
   const auto rows = scan(table.name);
   auto index = BPlusTreeIndex::create(records_);
-  for (const auto& row : rows) {
-    if (std::holds_alternative<std::monostate>(row.values[position])) continue;
-    if (!index.insert(std::get<std::int64_t>(row.values[position]), row.id)) {
-      throw TableCorruption("new index rejected an existing table row");
+  try {
+    for (const auto& row : rows) {
+      if (std::holds_alternative<std::monostate>(row.values[position])) continue;
+      if (!index.insert(std::get<std::int64_t>(row.values[position]), row.id)) {
+        throw TableCorruption("new index rejected an existing table row");
+      }
     }
+    return catalog_.register_index(
+        {std::string(index_name), table.name, column->name, index.header_id()});
+  } catch (...) {
+    const auto failure = std::current_exception();
+    try {
+      index.destroy();
+    } catch (const std::exception&) {
+      // Preserve the original build or registration failure; cleanup is best-effort.
+    }
+    std::rethrow_exception(failure);
   }
-  return catalog_.register_index(
-      {std::string(index_name), table.name, column->name, index.header_id()});
 }
 
 std::vector<TableRow> TableStore::lookup_index(std::string_view index_name, std::int64_t key,
