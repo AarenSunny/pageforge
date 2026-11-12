@@ -45,8 +45,8 @@ planner changing when the index is created.
 make check
 ```
 
-Explain that the command compiles with warnings treated as errors, runs 57
-unit tests, exercises the complete CLI and ready-made demo database, and
+Explain that the command compiles with warnings treated as errors, runs the
+full unit suite, exercises the complete CLI and ready-made demo database, and
 validates the benchmark contract.
 
 ## 0:40–1:20 — Persist typed rows
@@ -99,8 +99,10 @@ safety.
   future work.
 - The insertion-page hint improved one controlled 1,000-row development run
   from 784,030 microseconds to a 70,139-microsecond median after the change.
-- Index construction is single-threaded and non-transactional. Failed builds
-  can leave unreachable internal records until recovery support exists.
+- Index construction is single-threaded and non-transactional. Failed
+  in-process builds best-effort retire their unregistered tree, but a process
+  or machine crash can still leave unreachable records until write-ahead
+  recovery exists.
 - Sorts that cannot reuse the selected index's key order are stable but blocking, and
   there is no write-ahead log or isolation.
 
