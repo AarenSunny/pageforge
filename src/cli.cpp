@@ -17,6 +17,7 @@
 
 #include "pageforge/record_store.hpp"
 #include "pageforge/sql_executor.hpp"
+#include "sql_identifier.hpp"
 
 namespace {
 
@@ -44,19 +45,6 @@ bool equal_name(std::string_view left, std::string_view right) {
   if (left.size() != right.size()) return false;
   for (std::size_t index = 0; index < left.size(); ++index) {
     if (ascii_lower(left[index]) != ascii_lower(right[index])) return false;
-  }
-  return true;
-}
-
-bool is_sql_identifier(std::string_view value) {
-  if (value.empty()) return false;
-  const auto letter = [](char character) {
-    return (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
-           character == '_';
-  };
-  if (!letter(value.front())) return false;
-  for (const auto character : value.substr(1)) {
-    if (!letter(character) && (character < '0' || character > '9')) return false;
   }
   return true;
 }
@@ -106,7 +94,9 @@ pageforge::Column parse_column(std::string_view specification) {
     throw std::invalid_argument("column must use name:type syntax");
   }
   const auto name = specification.substr(0, separator);
-  if (!is_sql_identifier(name)) throw std::invalid_argument("column name is not a SQL identifier");
+  if (!pageforge::detail::is_sql_identifier(name)) {
+    throw std::invalid_argument("column name is not a SQL identifier");
+  }
   auto type_name = lowercase(specification.substr(separator + 1));
   bool nullable = false;
   if (!type_name.empty() && type_name.back() == '?') {
@@ -409,7 +399,9 @@ int run(int argc, char* argv[]) {
     }
   } else if (command == "create-table") {
     const std::string_view table_name(argv[3]);
-    if (!is_sql_identifier(table_name)) throw std::invalid_argument("table name is not a SQL identifier");
+    if (!pageforge::detail::is_sql_identifier(table_name)) {
+      throw std::invalid_argument("table name is not a SQL identifier");
+    }
     for (const auto& table : catalog.list_tables()) {
       if (equal_name(table.name, table_name)) throw std::invalid_argument("table already exists");
     }
@@ -428,7 +420,9 @@ int run(int argc, char* argv[]) {
     std::cout << "created table " << table_name << '\n';
   } else if (command == "create-index") {
     const std::string_view index_name(argv[3]);
-    if (!is_sql_identifier(index_name)) throw std::invalid_argument("index name is not a SQL identifier");
+    if (!pageforge::detail::is_sql_identifier(index_name)) {
+      throw std::invalid_argument("index name is not a SQL identifier");
+    }
     for (const auto& index : catalog.list_indexes()) {
       if (equal_name(index.name, index_name)) throw std::invalid_argument("index already exists");
     }

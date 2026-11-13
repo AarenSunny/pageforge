@@ -1,6 +1,7 @@
 #include "pageforge/catalog.hpp"
 
 #include "pageforge/bplus_tree.hpp"
+#include "sql_identifier.hpp"
 
 #include <algorithm>
 #include <array>
@@ -28,18 +29,6 @@ std::string identifier_key(std::string_view value) {
   key.reserve(value.size());
   for (const auto character : value) key.push_back(ascii_lower(character));
   return key;
-}
-
-bool is_sql_identifier(std::string_view value) {
-  const auto is_initial = [](char character) {
-    return (character >= 'A' && character <= 'Z') ||
-           (character >= 'a' && character <= 'z') || character == '_';
-  };
-  const auto is_subsequent = [&](char character) {
-    return is_initial(character) || (character >= '0' && character <= '9');
-  };
-  return !value.empty() && is_initial(value.front()) &&
-         std::all_of(value.begin() + 1, value.end(), is_subsequent);
 }
 
 void append_u16(std::vector<std::byte>& output, std::uint16_t value) {
@@ -102,7 +91,7 @@ void validate_type(DataType type) {
 }
 
 void validate_table(const TableDefinition& table) {
-  if (!is_sql_identifier(table.name)) {
+  if (!detail::is_sql_identifier(table.name)) {
     throw std::invalid_argument("table name is not a SQL identifier");
   }
   if (table.name.size() > std::numeric_limits<std::uint16_t>::max()) {
@@ -116,7 +105,7 @@ void validate_table(const TableDefinition& table) {
 
   std::unordered_set<std::string> names;
   for (const auto& column : table.schema) {
-    if (!is_sql_identifier(column.name)) {
+    if (!detail::is_sql_identifier(column.name)) {
       throw std::invalid_argument("column name is not a SQL identifier");
     }
     if (column.name.size() > std::numeric_limits<std::uint16_t>::max()) {
@@ -185,7 +174,7 @@ TableDefinition decode(std::span<const std::byte> bytes) {
   table.schema_version = read_u32(bytes, offset);
   if (table.schema_version == 0) throw CatalogCorruption("catalog schema version must be positive");
   table.name = read_text(bytes, offset);
-  if (!is_sql_identifier(table.name)) {
+  if (!detail::is_sql_identifier(table.name)) {
     throw CatalogCorruption("catalog table name is not a SQL identifier");
   }
   const auto column_count = read_u16(bytes, offset);
@@ -194,7 +183,7 @@ TableDefinition decode(std::span<const std::byte> bytes) {
   std::unordered_set<std::string> names;
   for (std::size_t index = 0; index < column_count; ++index) {
     auto name = read_text(bytes, offset);
-    if (!is_sql_identifier(name)) {
+    if (!detail::is_sql_identifier(name)) {
       throw CatalogCorruption("catalog column name is not a SQL identifier");
     }
     if (!names.insert(identifier_key(name)).second) {
@@ -214,7 +203,7 @@ void validate_index_identifiers(const IndexDefinition& index) {
   const std::array<std::pair<std::string_view, std::string_view>, 3> identifiers{{
       {index.name, "index name"}, {index.table, "index table name"}, {index.column, "index column name"}}};
   for (const auto& [value, label] : identifiers) {
-    if (!is_sql_identifier(value)) {
+    if (!detail::is_sql_identifier(value)) {
       throw std::invalid_argument(std::string(label) + " is not a SQL identifier");
     }
     if (value.size() > std::numeric_limits<std::uint16_t>::max()) {
@@ -248,8 +237,8 @@ IndexDefinition decode_index(std::span<const std::byte> bytes) {
   if (read_u16(bytes, offset) != 0) throw CatalogCorruption("index catalog entry has invalid padding");
   IndexDefinition index{read_text(bytes, offset), read_text(bytes, offset), read_text(bytes, offset),
                         {page_id, slot_id}};
-  if (!is_sql_identifier(index.name) || !is_sql_identifier(index.table) ||
-      !is_sql_identifier(index.column)) {
+  if (!detail::is_sql_identifier(index.name) || !detail::is_sql_identifier(index.table) ||
+      !detail::is_sql_identifier(index.column)) {
     throw CatalogCorruption("index catalog entry has a non-SQL identifier");
   }
   if (offset != bytes.size()) throw CatalogCorruption("index catalog entry has trailing bytes");

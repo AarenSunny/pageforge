@@ -1,6 +1,7 @@
 #include "pageforge/table_store.hpp"
 
 #include "pageforge/bplus_tree.hpp"
+#include "sql_identifier.hpp"
 
 #include <algorithm>
 #include <array>
@@ -247,7 +248,9 @@ std::vector<TableRow> TableStore::scan(std::string_view table_name) {
 
 RecordId TableStore::create_index(std::string_view index_name, std::string_view table_name,
                                   std::string_view column_name) {
-  if (index_name.empty()) throw std::invalid_argument("index name must not be empty");
+  if (!detail::is_sql_identifier(index_name)) {
+    throw std::invalid_argument("index name is not a SQL identifier");
+  }
   if (index_name.size() > std::numeric_limits<std::uint16_t>::max()) {
     throw std::invalid_argument("index name is too long");
   }

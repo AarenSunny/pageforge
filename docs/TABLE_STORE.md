@@ -53,8 +53,9 @@ distinct because index entries include the record ID. Table and column aliases
 use the same ASCII-case-insensitive namespace as other table operations, while
 the index definition retains their canonical catalog spelling. Once
 registration succeeds, ordinary inserts and deletes maintain the new index
-automatically. Empty or oversized names, non-integer target columns, and
-ASCII-case-insensitive duplicate names are rejected before tree allocation.
+automatically. Names outside the unquoted ASCII SQL identifier grammar,
+oversized names, non-integer target columns, and ASCII-case-insensitive
+duplicate names are rejected before tree allocation.
 
 ## Row envelope
 

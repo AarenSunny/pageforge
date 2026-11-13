@@ -1163,6 +1163,15 @@ void typed_tables_build_indexes_for_existing_rows() {
     check(limited.size() == 2 && limited[0].id == first && limited[1].id == second,
           "limited point lookups should stop after the requested candidate count");
     const auto record_count_before_rejection = records.scan().size();
+    const auto slot_count = [&] {
+      std::size_t count = 0;
+      for (pageforge::PageId page_id = 0; page_id < pool.page_count(); ++page_id) {
+        const auto guard = pool.fetch(page_id);
+        count += guard.page().slot_count();
+      }
+      return count;
+    };
+    const auto slot_count_before_rejection = slot_count();
     check_throws<std::invalid_argument>(
         [&] { (void)tables.create_index("items_score_idx", "items", "score"); },
         "building a duplicate index should fail before allocating another tree");
@@ -1175,8 +1184,15 @@ void typed_tables_build_indexes_for_existing_rows() {
         [&] { (void)tables.create_index("", "items", "score"); },
         "index builder should validate its name before allocating a tree");
     check_throws<std::invalid_argument>(
+        [&] { (void)tables.create_index("items-score-idx", "items", "score"); },
+        "index builder should enforce SQL identifier grammar before allocating a tree");
+    check_throws<std::invalid_argument>(
         [&] { (void)tables.create_index("items_name_idx", "items", "name"); },
         "index builder should reject non-integer columns");
+    check(records.scan().size() == record_count_before_rejection,
+          "all rejected index builds should avoid unreachable tree records");
+    check(slot_count() == slot_count_before_rejection,
+          "rejected index builds should not leave reusable tree tombstones");
   }
   std::filesystem::remove(path);
 }
