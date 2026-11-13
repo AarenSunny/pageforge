@@ -28,9 +28,10 @@ pool.flush_all();
 `find_table` and `list_tables` scan persisted records and reconstruct their
 schemas after the database is reopened. Named lookups use the same ASCII
 case-insensitive namespace as creation while returning the originally stored
-spelling. Creation rejects empty identifiers,
-empty schemas, ASCII-case-insensitive duplicate column or table names, unknown
-types, and schema version zero. `register_index` additionally requires an
+spelling. Creation accepts only unquoted ASCII SQL identifiers matching
+`[A-Za-z_][A-Za-z0-9_]*` and rejects empty schemas, ASCII-case-insensitive
+duplicate column or table names, unknown types, and schema version zero.
+`register_index` additionally requires an
 existing table and integer column, an ASCII-case-insensitively unique index
 name, and a header that opens as a valid B+ tree. Index registration resolves
 table and column aliases case-insensitively, then persists their canonical

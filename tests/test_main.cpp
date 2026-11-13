@@ -655,6 +655,15 @@ void catalog_validates_definitions() {
     Catalog catalog(records);
     check_throws<std::invalid_argument>([&] { (void)catalog.create_table({"", people_schema(), 1}); },
                                         "empty table name should fail");
+    check_throws<std::invalid_argument>(
+        [&] { (void)catalog.create_table({"not-queryable", people_schema(), 1}); },
+        "table names outside the SQL identifier grammar should fail");
+    check_throws<std::invalid_argument>(
+        [&] {
+          (void)catalog.create_table(
+              {"invalid_column", {{"2nd", pageforge::DataType::Integer, false}}, 1});
+        },
+        "column names outside the SQL identifier grammar should fail");
     check_throws<std::invalid_argument>([&] { (void)catalog.create_table({"empty", {}, 1}); },
                                         "empty table schema should fail");
     check_throws<std::invalid_argument>(
@@ -700,9 +709,15 @@ void catalog_detects_corrupt_metadata() {
               encoded[kEncodedTableNameOffset] == std::byte{'p'},
           "test setup should locate the encoded table name");
     encoded[kEncodedTableNameOffset] = std::byte{'P'};
-    (void)records.insert(encoded);
+    const auto alias_id = records.insert(encoded);
     check_throws<CatalogCorruption>([&] { (void)catalog.list_tables(); },
                                     "persisted case-insensitive table aliases should be corruption");
+    check(records.erase(alias_id), "test should remove the injected table alias");
+    encoded = records.read(id);
+    encoded[kEncodedTableNameOffset] = std::byte{'-'};
+    records.replace(id, encoded);
+    check_throws<CatalogCorruption>([&] { (void)catalog.list_tables(); },
+                                    "persisted non-SQL table names should be corruption");
   }
   std::filesystem::remove(path);
 
@@ -780,6 +795,9 @@ void catalog_validates_index_definitions() {
         [&] { (void)catalog.register_index({"", "people", "id", index.header_id()}); },
         "empty index names should fail");
     check_throws<std::invalid_argument>(
+        [&] { (void)catalog.register_index({"people-id", "people", "id", index.header_id()}); },
+        "index names outside the SQL identifier grammar should fail");
+    check_throws<std::invalid_argument>(
         [&] { (void)catalog.register_index({"missing_table_idx", "missing", "id", index.header_id()}); },
         "indexes should reference an existing table");
     check_throws<std::invalid_argument>(
@@ -804,9 +822,15 @@ void catalog_validates_index_definitions() {
               encoded[kEncodedIndexNameOffset] == std::byte{'p'},
           "test setup should locate the encoded index name");
     encoded[kEncodedIndexNameOffset] = std::byte{'P'};
-    (void)records.insert(encoded);
+    const auto alias_id = records.insert(encoded);
     check_throws<CatalogCorruption>([&] { (void)catalog.list_indexes(); },
                                     "persisted case-insensitive index aliases should be corruption");
+    check(records.erase(alias_id), "test should remove the injected index alias");
+    encoded = records.read(metadata_id);
+    encoded[kEncodedIndexNameOffset] = std::byte{'-'};
+    records.replace(metadata_id, encoded);
+    check_throws<CatalogCorruption>([&] { (void)catalog.list_indexes(); },
+                                    "persisted non-SQL index names should be corruption");
   }
   std::filesystem::remove(path);
 
