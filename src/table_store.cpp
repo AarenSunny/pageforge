@@ -88,6 +88,9 @@ RowEnvelope parse(std::span<const std::byte> bytes) {
   require_bytes(bytes, offset, name_length);
   const auto* begin = reinterpret_cast<const char*>(bytes.data() + offset);
   std::string table_name(begin, name_length);
+  if (!detail::is_sql_identifier(table_name)) {
+    throw TableCorruption("table row owner is not a SQL identifier");
+  }
   offset += name_length;
   return {std::move(table_name), schema_version, bytes.subspan(offset)};
 }

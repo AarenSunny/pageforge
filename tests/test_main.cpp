@@ -1402,6 +1402,14 @@ void typed_tables_detect_corrupt_envelopes() {
     check_throws<TableCorruption>(
         [&] { (void)tables.erase("EVENTS", id); },
         "deletes should classify a noncanonical persisted owner as corruption");
+    encoded[12] = std::byte{'-'};
+    records.replace(id, encoded);
+    check_throws<TableCorruption>(
+        [&] { (void)tables.scan("Events"); },
+        "scans should reject persisted owners outside the SQL identifier grammar");
+    check_throws<TableCorruption>(
+        [&] { (void)tables.read("Events", id); },
+        "point reads should reject persisted owners outside the SQL identifier grammar");
   }
   std::filesystem::remove(ownership_path);
 }
